@@ -1,4 +1,5 @@
 import type MagicString from "magic-string";
+import type { TextEdit } from "./protocol.js";
 
 export interface AnnotateResult {
   code: string;
@@ -30,7 +31,7 @@ export interface FrameworkAdapter {
   /** Inject `data-k-loc` attributes. Return null if no changes. */
   annotate(code: string, ctx: AnnotateContext): AnnotateResult | null;
   /** Apply a property edit by rewriting source. Null = adapter declines. */
-  applyPropertyEdit(input: PropertyEditInput): { newSource: string } | null;
+  applyPropertyEdit(input: PropertyEditInput): { newSource: string; edits: TextEdit[] } | null;
   /** Prompts injected into the Claude CLI dispatch for this adapter. */
   prompts: {
     /** System prompt for "change this element" requests. */

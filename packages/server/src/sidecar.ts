@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http";
+import { readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   DEFAULT_PORT,
@@ -169,27 +171,39 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           });
           return;
         }
-        applySveltePropertyEdit({
-          projectRoot: opts.projectRoot,
-          file: loc.file,
-          line: loc.line,
-          col: loc.col,
-          property: msg.property,
-          value: msg.value,
-        }).then(
-          (edits) => {
-            state.recordEdits(edits);
-            broadcast({ type: "edit_applied", edits });
-          },
-          (err: Error) => {
+        const absPath = resolve(opts.projectRoot, loc.file);
+        readFile(absPath, "utf8")
+          .then((source) => {
+            const result = applySveltePropertyEdit({
+              file: absPath,
+              line: loc.line,
+              col: loc.col,
+              property: msg.property,
+              value: msg.value,
+              source,
+            });
+            if (!result) {
+              broadcast({
+                type: "toast",
+                level: "error",
+                message:
+                  "Could not apply property edit — element not found at source location",
+              });
+              return;
+            }
+            return writeFile(absPath, result.newSource, "utf8").then(() => {
+              state.recordEdits(result.edits);
+              broadcast({ type: "edit_applied", edits: result.edits });
+            });
+          })
+          .catch((err: Error) => {
             console.error("[sidecar] property edit failed:", err);
             broadcast({
               type: "toast",
               level: "error",
               message: `Property edit failed: ${err.message}`,
             });
-          },
-        );
+          });
         return;
       }
     }

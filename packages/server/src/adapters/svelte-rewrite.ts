@@ -1,34 +1,20 @@
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import MagicString from "magic-string";
-import type { TextEdit } from "@konstner/core";
+import type { TextEdit, PropertyEditInput } from "@konstner/core";
 
-export interface PropertyEditParams {
-  projectRoot: string;
-  file: string;
-  line: number;
-  col: number;
-  property: string;
-  value: string;
-}
+export type ApplyResult = { newSource: string; edits: TextEdit[] };
 
-export async function applySveltePropertyEdit(
-  params: PropertyEditParams,
-): Promise<TextEdit[]> {
-  const absPath = resolve(params.projectRoot, params.file);
-  const src = await readFile(absPath, "utf8");
+export function applySveltePropertyEdit(
+  params: PropertyEditInput,
+): ApplyResult | null {
+  const src = params.source;
   const offsets = buildLineOffsets(src);
   const base = offsets[params.line - 1] ?? 0;
   const tagStart = base + params.col;
 
-  if (src[tagStart] !== "<") {
-    throw new Error(
-      `expected '<' at ${params.file}:${params.line}:${params.col}, got ${JSON.stringify(src[tagStart])}`,
-    );
-  }
+  if (src[tagStart] !== "<") return null;
 
   const tagEnd = findOpeningTagEnd(src, tagStart);
-  if (tagEnd === -1) throw new Error("unterminated opening tag");
+  if (tagEnd === -1) return null;
 
   const ms = new MagicString(src);
   const style = findStyleAttr(src, tagStart, tagEnd);
@@ -53,20 +39,22 @@ export async function applySveltePropertyEdit(
     newText = inserted;
   }
 
-  await writeFile(absPath, ms.toString(), "utf8");
-
   const startLC = toLineCol(offsets, editStart);
   const endLC = toLineCol(offsets, editEnd);
-  return [
-    {
-      file: absPath,
-      startLine: startLC.line,
-      startCol: startLC.col,
-      endLine: endLC.line,
-      endCol: endLC.col,
-      newText,
-    },
-  ];
+
+  return {
+    newSource: ms.toString(),
+    edits: [
+      {
+        file: params.file,
+        startLine: startLC.line,
+        startCol: startLC.col,
+        endLine: endLC.line,
+        endCol: endLC.col,
+        newText,
+      },
+    ],
+  };
 }
 
 function buildLineOffsets(src: string): number[] {

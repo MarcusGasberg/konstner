@@ -41,11 +41,17 @@ describe("svelte adapter", () => {
     expect(adapter.prompts.change.toLowerCase()).toContain("svelte");
   });
 
-  it("applyPropertyEdit is not yet wired (TASK-5)", () => {
-    expect(
-      adapter.applyPropertyEdit({
-        file: "x.svelte", line: 0, col: 0, property: "color", value: "red", source: "<div></div>",
-      }),
-    ).toBeNull();
+  it("applyPropertyEdit delegates to the server rewrite function", () => {
+    const out = adapter.applyPropertyEdit({
+      file: "/abs/App.svelte",
+      line: 1,
+      col: 0,
+      property: "color",
+      value: "red",
+      source: `<div data-k-loc="App.svelte:1:0">hi</div>`,
+    });
+    expect(out).not.toBeNull();
+    expect(out!.newSource).toContain("color: red");
+    expect(out!.edits).toHaveLength(1);
   });
 });
