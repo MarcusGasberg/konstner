@@ -37,6 +37,19 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   const state = new ShellState();
   const sockets = new Set<WebSocket>();
 
+  // Serialize read-modify-write per file so rapid property edits on the same
+  // source don't clobber each other (the overlay can fire multiple edits
+  // within an event-loop tick while the user drags a color picker).
+  const fileLocks = new Map<string, Promise<void>>();
+  function withFileLock(path: string, fn: () => Promise<void>): Promise<void> {
+    const prev = fileLocks.get(path) ?? Promise.resolve();
+    const next = prev.then(fn, fn).finally(() => {
+      if (fileLocks.get(path) === next) fileLocks.delete(path);
+    });
+    fileLocks.set(path, next);
+    return next;
+  }
+
   const broadcast = (msg: ServerToClient) => {
     const json = JSON.stringify(msg);
     for (const s of sockets) if (s.readyState === s.OPEN) s.send(json);
@@ -172,10 +185,11 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           return;
         }
         const absPath = resolve(opts.projectRoot, loc.file);
-        readFile(absPath, "utf8")
-          .then((source) => {
+        void withFileLock(absPath, async () => {
+          try {
+            const source = await readFile(absPath, "utf8");
             const result = applySveltePropertyEdit({
-              file: absPath,
+              file: loc.file,
               line: loc.line,
               col: loc.col,
               property: msg.property,
@@ -186,30 +200,29 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
               broadcast({
                 type: "toast",
                 level: "error",
-                message:
-                  "Could not apply property edit — element not found at source location",
+                message: `Could not apply property edit at ${loc.file}:${loc.line}:${loc.col} — the source may have drifted since the page loaded (try a hot reload).`,
               });
               return;
             }
-            return writeFile(absPath, result.newSource, "utf8").then(() => {
-              state.recordEdits(result.edits);
-              broadcast({ type: "edit_applied", edits: result.edits });
-            });
-          })
-          .catch((err: Error) => {
+            await writeFile(absPath, result.newSource, "utf8");
+            state.recordEdits(result.edits);
+            broadcast({ type: "edit_applied", edits: result.edits });
+          } catch (err) {
+            const message = (err as Error).message ?? String(err);
             console.error("[sidecar] property edit failed:", err);
             broadcast({
               type: "toast",
               level: "error",
-              message: `Property edit failed: ${err.message}`,
+              message: `Property edit failed: ${message}`,
             });
-          });
+          }
+        });
         return;
       }
     }
   }
 
-  await new Promise<void>((resolve, reject) => {
+  await new Promise<void>((done, reject) => {
     http.once("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {
         reject(
@@ -221,7 +234,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
         reject(err);
       }
     });
-    http.listen(port, "127.0.0.1", () => resolve());
+    http.listen(port, "127.0.0.1", () => done());
   });
 
   return {
