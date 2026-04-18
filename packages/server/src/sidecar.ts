@@ -8,11 +8,11 @@ import {
   type ClientToServer,
   type ServerToClient,
   type PendingRequest,
+  type FrameworkAdapter,
 } from "@konstner/core";
 import { ShellState } from "./state.js";
 import { applyTextEdits } from "./edits.js";
 import { dispatchRequest } from "./dispatch.js";
-import { applySveltePropertyEdit } from "./adapters/svelte-rewrite.js";
 import type {
   ApplyEditParams,
   ListPendingResult,
@@ -25,6 +25,7 @@ import type {
 export interface SidecarOptions {
   port?: number;
   projectRoot: string;
+  adapters: FrameworkAdapter[];
 }
 
 export interface Sidecar {
@@ -184,11 +185,20 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           });
           return;
         }
+        const adapter = opts.adapters.find((a) => a.matches(loc.file));
+        if (!adapter) {
+          broadcast({
+            type: "toast",
+            level: "error",
+            message: `No adapter matched file '${loc.file}' — cannot apply property edit.`,
+          });
+          return;
+        }
         const absPath = resolve(opts.projectRoot, loc.file);
         void withFileLock(absPath, async () => {
           try {
             const source = await readFile(absPath, "utf8");
-            const result = applySveltePropertyEdit({
+            const result = adapter.applyPropertyEdit({
               file: loc.file,
               line: loc.line,
               col: loc.col,
@@ -200,7 +210,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
               broadcast({
                 type: "toast",
                 level: "error",
-                message: `Could not apply property edit at ${loc.file}:${loc.line}:${loc.col} — the source may have drifted since the page loaded (try a hot reload).`,
+                message: `Adapter '${adapter.id}' does not support property edits — try a text prompt instead.`,
               });
               return;
             }
