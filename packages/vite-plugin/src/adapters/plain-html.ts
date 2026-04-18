@@ -2,19 +2,20 @@ import MagicString from "magic-string";
 import type { FrameworkAdapter, AnnotateResult, AnnotateContext } from "@konstner/core";
 import { TAG_RE, buildLineOffsets, findBlockedRanges, isInRanges, toLineCol } from "./shared.js";
 
-const CHANGE_PROMPT = `You are editing a Svelte 5 component. Preserve <script>/<style> blocks; modify only the requested element's attributes, classes, or children. Use runes when adding state.`;
-const EXTRACT_PROMPT = `Extract the given subtree into a new Svelte 5 component under src/lib/components/. Use <script lang="ts"> with $props(). Replace the original subtree with an import + usage.`;
+const SKIP = new Set(["html", "head", "body", "title", "meta", "link", "base"]);
 
-export function createSvelteAdapter(): FrameworkAdapter {
+const CHANGE_PROMPT = `You are editing a plain HTML file. Preserve doctype and head. Modify only the requested element's attributes, classes, or children.`;
+const EXTRACT_PROMPT = `Extract the given subtree into a new .html partial under ./partials/. Replace the original subtree with an HTML comment referencing the partial path.`;
+
+export function createPlainHtmlAdapter(): FrameworkAdapter {
   return {
-    id: "svelte",
-    matches: (id) => id.endsWith(".svelte"),
+    id: "plain-html",
+    matches: (id) => id.endsWith(".html"),
     annotate,
-    // TASK-5: replaced by applySveltePropertyEdit from @konstner/server.
-    // Returning null means the server falls back to the prompt dispatch path.
+    // Plain HTML edits go through the prompt path; no direct rewrite.
     applyPropertyEdit: () => null,
     prompts: { change: CHANGE_PROMPT, extract: EXTRACT_PROMPT },
-    componentExtension: ".svelte",
+    componentExtension: ".html",
   };
 }
 
@@ -27,9 +28,9 @@ function annotate(code: string, ctx: AnnotateContext): AnnotateResult | null {
     const start = match.index ?? 0;
     if (isInRanges(start, blocked)) continue;
     const tagName = match[1];
+    if (SKIP.has(tagName)) continue;
     const attrs = match[2] ?? "";
     if (attrs.includes("data-k-loc=")) continue;
-    if (/^[A-Z]/.test(tagName) || tagName.includes(":")) continue;
     const { line, col } = toLineCol(offsets, start);
     ms.appendLeft(start + 1 + tagName.length, ` data-k-loc="${ctx.filename}:${line}:${col}"`);
     touched = true;
