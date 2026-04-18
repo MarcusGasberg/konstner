@@ -12,7 +12,9 @@ export function createSvelteAdapter(): FrameworkAdapter {
     id: "svelte",
     matches: (id) => id.endsWith(".svelte"),
     annotate,
-    applyPropertyEdit: () => null, // wired in Task 5
+    // TASK-5: replaced by applySveltePropertyEdit from @konstner/server.
+    // Returning null means the server falls back to the prompt dispatch path.
+    applyPropertyEdit: () => null,
     prompts: { change: CHANGE_PROMPT, extract: EXTRACT_PROMPT },
     componentExtension: ".svelte",
   };

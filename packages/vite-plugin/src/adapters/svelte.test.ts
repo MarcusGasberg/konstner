@@ -41,7 +41,7 @@ describe("svelte adapter", () => {
     expect(adapter.prompts.change.toLowerCase()).toContain("svelte");
   });
 
-  it("applyPropertyEdit returns null (wired in Task 5)", () => {
+  it("applyPropertyEdit is not yet wired (TASK-5)", () => {
     expect(
       adapter.applyPropertyEdit({
         file: "x.svelte", line: 0, col: 0, property: "color", value: "red", source: "<div></div>",
