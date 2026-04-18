@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "konstner": {
+      "command": "node",
+      "args": [
+        "/home/marcusg/source/repos/konstner/packages/server/dist/mcp.js"
+      ],
+      "env": {
+        "KONSTNER_PORT": "5177"
+      }
+    }
+  }
+}
