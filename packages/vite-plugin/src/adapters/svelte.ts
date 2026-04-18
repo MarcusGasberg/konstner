@@ -1,40 +1,41 @@
 import MagicString from "magic-string";
+import type { FrameworkAdapter, AnnotateResult, AnnotateContext } from "@konstner/core";
 
 const TAG_RE = /<([a-z][a-z0-9-]*)(?=[\s/>])([^>]*?)(\/?)>/g;
 const BLOCK_RE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi;
 
-export function annotateSvelteSource(
-  code: string,
-  filename: string,
-): { code: string; map: ReturnType<MagicString["generateMap"]> } | null {
+const CHANGE_PROMPT = `You are editing a Svelte 5 component. Preserve <script>/<style> blocks; modify only the requested element's attributes, classes, or children. Use runes when adding state.`;
+const EXTRACT_PROMPT = `Extract the given subtree into a new Svelte 5 component under src/lib/components/. Use <script lang="ts"> with $props(). Replace the original subtree with an import + usage.`;
+
+export function createSvelteAdapter(): FrameworkAdapter {
+  return {
+    id: "svelte",
+    matches: (id) => id.endsWith(".svelte"),
+    annotate,
+    applyPropertyEdit: () => null, // wired in Task 5
+    prompts: { change: CHANGE_PROMPT, extract: EXTRACT_PROMPT },
+    componentExtension: ".svelte",
+  };
+}
+
+function annotate(code: string, ctx: AnnotateContext): AnnotateResult | null {
   const ms = new MagicString(code);
   let touched = false;
   const offsets = buildLineOffsets(code);
   const blocked = findBlockedRanges(code);
-
   for (const match of code.matchAll(TAG_RE)) {
     const start = match.index ?? 0;
     if (isInRanges(start, blocked)) continue;
     const tagName = match[1];
     const attrs = match[2] ?? "";
     if (attrs.includes("data-k-loc=")) continue;
-    // skip Svelte special tags (start with uppercase or `svelte:`)
     if (/^[A-Z]/.test(tagName) || tagName.includes(":")) continue;
-
     const { line, col } = toLineCol(offsets, start);
-    const insertAt = start + 1 + tagName.length;
-    const selfClose = match[3] === "/";
-    const injected = ` data-k-loc="${filename}:${line}:${col}"`;
-    ms.appendLeft(insertAt, injected);
+    ms.appendLeft(start + 1 + tagName.length, ` data-k-loc="${ctx.filename}:${line}:${col}"`);
     touched = true;
-    void selfClose;
   }
-
   if (!touched) return null;
-  return {
-    code: ms.toString(),
-    map: ms.generateMap({ hires: true, source: filename }),
-  };
+  return { code: ms.toString(), map: ms.generateMap({ hires: true, source: ctx.filename }) };
 }
 
 function findBlockedRanges(src: string): Array<[number, number]> {

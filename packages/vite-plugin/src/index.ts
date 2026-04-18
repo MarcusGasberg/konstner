@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import type { Plugin, ResolvedConfig } from "vite";
 import { DEFAULT_PORT } from "@konstner/core";
 import { startSidecar, type Sidecar } from "@konstner/server/sidecar";
-import { annotateSvelteSource } from "./adapters/svelte.js";
+import { createSvelteAdapter } from "./adapters/svelte.js";
 import { writeMcpConfig } from "./mcp-config.js";
 
 export interface KonstnerOptions {
@@ -15,7 +15,8 @@ export default function konstner(opts: KonstnerOptions = {}): Plugin {
   let config: ResolvedConfig;
   let sidecar: Sidecar | null = null;
   const port = opts.port ?? DEFAULT_PORT;
-  const adapter = opts.adapter ?? "svelte";
+  const adapterOpt = opts.adapter ?? "svelte";
+  const svelteAdapter = createSvelteAdapter();
 
   return {
     name: "konstner",
@@ -50,10 +51,10 @@ export default function konstner(opts: KonstnerOptions = {}): Plugin {
     },
 
     transform(code, id) {
-      if (adapter !== "svelte") return null;
+      if (adapterOpt !== "svelte") return null;
       if (!id.endsWith(".svelte")) return null;
       const rel = relative(config.root, id);
-      const out = annotateSvelteSource(code, rel);
+      const out = svelteAdapter.annotate(code, { filename: rel });
       if (!out) return null;
       return { code: out.code, map: out.map };
     },
