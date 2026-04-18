@@ -23,7 +23,7 @@ export type PendingRequestKind = z.infer<typeof PendingRequestKind>;
 export const PendingRequest = z.object({
   id: z.string(),
   kind: PendingRequestKind,
-  createdAt: z.number(),
+  createdAt: z.number().int().nonnegative(),
   selection: z.union([ElementSelection, z.array(ElementSelection)]),
   prompt: z.string().optional(),
   suggestedName: z.string().optional(),
