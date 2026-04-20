@@ -9,12 +9,13 @@ import { DEFAULT_PORT } from "@konstner/core";
 
 const port = Number(process.env.KONSTNER_PORT ?? DEFAULT_PORT);
 const endpoint = `http://127.0.0.1:${port}/rpc`;
+const requestId = process.env.KONSTNER_REQUEST_ID;
 
 async function rpc(method: string, params?: unknown): Promise<unknown> {
   const res = await fetch(endpoint, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, params }),
+    body: JSON.stringify({ method, params, requestId }),
   });
   const body = (await res.json()) as { ok: boolean; result?: unknown; error?: string };
   if (!body.ok) throw new Error(body.error ?? "rpc failed");

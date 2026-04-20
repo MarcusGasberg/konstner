@@ -24,9 +24,10 @@ export const PendingRequest = z.object({
   id: z.string(),
   kind: PendingRequestKind,
   createdAt: z.number().int().nonnegative(),
-  selection: z.union([ElementSelection, z.array(ElementSelection)]),
+  selection: z.union([ElementSelection, z.array(ElementSelection)]).nullable(),
   prompt: z.string().optional(),
   suggestedName: z.string().optional(),
+  path: z.string().optional(),
 });
 export type PendingRequest = z.infer<typeof PendingRequest>;
 
@@ -43,18 +44,30 @@ export type TextEdit = z.infer<typeof TextEdit>;
 export const ClientToServer = z.discriminatedUnion("type", [
   z.object({ type: z.literal("hello"), clientId: z.string() }),
   z.object({ type: z.literal("selection_changed"), selection: ElementSelection.nullable() }),
-  z.object({ type: z.literal("request_change"), id: z.string(), selection: ElementSelection, prompt: z.string() }),
+  z.object({ type: z.literal("request_change"), id: z.string(), selection: ElementSelection.nullable(), prompt: z.string(), path: z.string().optional() }),
   z.object({ type: z.literal("request_extract"), id: z.string(), selection: z.array(ElementSelection), suggestedName: z.string() }),
-  z.object({ type: z.literal("apply_property_edit"), selection: ElementSelection, property: z.string(), value: z.string() }),
+  z.object({ type: z.literal("request_continue"), id: z.string(), parentId: z.string(), prompt: z.string() }),
+  z.object({ type: z.literal("request_revert"), threadId: z.string() }),
 ]);
 export type ClientToServer = z.infer<typeof ClientToServer>;
+
+export const Diagnostic = z.object({
+  file: z.string(),
+  line: z.number().int().nonnegative().optional(),
+  col: z.number().int().nonnegative().optional(),
+  severity: z.enum(["error", "warning", "info"]),
+  message: z.string(),
+});
+export type Diagnostic = z.infer<typeof Diagnostic>;
 
 export const ServerToClient = z.discriminatedUnion("type", [
   z.object({ type: z.literal("hello_ack"), serverVersion: z.string() }),
   z.object({ type: z.literal("pending_requests"), requests: z.array(PendingRequest) }),
   z.object({ type: z.literal("request_resolved"), id: z.string(), summary: z.string() }),
   z.object({ type: z.literal("edit_applied"), edits: z.array(TextEdit) }),
+  z.object({ type: z.literal("request_reverted"), threadId: z.string(), files: z.array(z.string()) }),
   z.object({ type: z.literal("toast"), level: z.enum(["info", "success", "error"]), message: z.string() }),
+  z.object({ type: z.literal("diagnostics"), scope: z.enum(["file", "project"]), added: z.array(Diagnostic) }),
 ]);
 export type ServerToClient = z.infer<typeof ServerToClient>;
 

@@ -8,6 +8,7 @@ export interface RpcRequest {
     | "apply_text_edit"
     | "get_recent_edits";
   params?: unknown;
+  requestId?: string;
 }
 
 export interface GetSelectionResult {

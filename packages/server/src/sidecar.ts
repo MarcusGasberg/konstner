@@ -1,6 +1,5 @@
 import { createServer, type IncomingMessage } from "node:http";
-import { readFile, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { writeFile } from "node:fs/promises";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   DEFAULT_PORT,
@@ -12,7 +11,9 @@ import {
 } from "@konstner/core";
 import { ShellState } from "./state.js";
 import { applyTextEdits } from "./edits.js";
-import { dispatchRequest } from "./dispatch.js";
+import { dispatchRequest, type ContinuationContext } from "./dispatch.js";
+import { verifyFileSyntax } from "./verify.js";
+import { createDiagnosticsRunner, type DiagnosticsRunner } from "./diagnostics.js";
 import type {
   ApplyEditParams,
   ListPendingResult,
@@ -25,7 +26,8 @@ import type {
 export interface SidecarOptions {
   port?: number;
   projectRoot: string;
-  adapters: FrameworkAdapter[];
+  /** Adapters used for post-edit syntax verification and Tier 2 diagnostics. */
+  adapters?: FrameworkAdapter[];
 }
 
 export interface Sidecar {
@@ -35,26 +37,21 @@ export interface Sidecar {
 
 export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   const port = opts.port ?? DEFAULT_PORT;
+  const adapters = opts.adapters ?? [];
   const state = new ShellState();
   const sockets = new Set<WebSocket>();
-
-  // Serialize read-modify-write per file so rapid property edits on the same
-  // source don't clobber each other (the overlay can fire multiple edits
-  // within an event-loop tick while the user drags a color picker).
-  const fileLocks = new Map<string, Promise<void>>();
-  function withFileLock(path: string, fn: () => Promise<void>): Promise<void> {
-    const prev = fileLocks.get(path) ?? Promise.resolve();
-    const next = prev.then(fn, fn).finally(() => {
-      if (fileLocks.get(path) === next) fileLocks.delete(path);
-    });
-    fileLocks.set(path, next);
-    return next;
-  }
 
   const broadcast = (msg: ServerToClient) => {
     const json = JSON.stringify(msg);
     for (const s of sockets) if (s.readyState === s.OPEN) s.send(json);
   };
+
+  const diagnostics: DiagnosticsRunner = createDiagnosticsRunner({
+    projectRoot: opts.projectRoot,
+    adapters,
+    onResult: (result) => broadcast({ type: "diagnostics", scope: result.scope, added: result.added }),
+    onLog: (line) => console.log(line),
+  });
 
   const http = createServer(async (req, res) => {
     if (!req.url) return res.end();
@@ -98,9 +95,25 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
       }
       case "apply_text_edit": {
         const p = rpc.params as ApplyEditParams;
-        await applyTextEdits(p.edits);
+        const attributedId =
+          rpc.requestId ??
+          (state.pending.length === 1 ? state.pending[0].id : undefined);
+        await state.recordThreadEdits(attributedId, p.edits);
+        const result = await applyTextEdits(p.edits, adapters);
+        if (!result.ok) {
+          const summary = result.errors
+            .map((e) => `${e.file}${e.line ? `:${e.line}${e.col != null ? `:${e.col}` : ""}` : ""}: ${e.message}`)
+            .join("; ");
+          throw new Error(
+            `edits rejected — post-edit syntax check failed. Re-read the file, adjust your edit, and retry. Details: ${summary}`,
+          );
+        }
         state.recordEdits(p.edits);
         broadcast({ type: "edit_applied", edits: p.edits });
+        diagnostics.schedule({
+          files: result.touchedFiles,
+          scope: result.exportedSurfaceChanged ? "project" : "file",
+        });
         return { applied: p.edits.length };
       }
       case "get_recent_edits": {
@@ -140,13 +153,9 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           createdAt: Date.now(),
           selection: msg.selection,
           prompt: msg.prompt,
+          path: msg.path,
         };
         state.enqueue(req);
-        broadcast({
-          type: "toast",
-          level: "info",
-          message: `Dispatching to Claude: ${msg.prompt.slice(0, 60)}`,
-        });
         dispatchRequest(req, {
           cwd: opts.projectRoot,
           port,
@@ -163,11 +172,6 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           suggestedName: msg.suggestedName,
         };
         state.enqueue(req);
-        broadcast({
-          type: "toast",
-          level: "info",
-          message: `Dispatching extract: ${msg.suggestedName}`,
-        });
         dispatchRequest(req, {
           cwd: opts.projectRoot,
           port,
@@ -175,58 +179,110 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
         });
         return;
       }
-      case "apply_property_edit": {
-        const loc = msg.selection.loc;
-        if (!loc) {
+      case "request_continue": {
+        const parentResolved = state.findResolved(msg.parentId);
+        const thread = state.getThreadForRequest(msg.parentId);
+        if (!parentResolved || !thread) {
           broadcast({
             type: "toast",
             level: "error",
-            message: "No source location for this element — cannot edit.",
+            message: "Cannot continue: parent request not found.",
           });
           return;
         }
-        const adapter = opts.adapters.find((a) => a.matches(loc.file));
-        if (!adapter) {
+        if (thread.status === "reverted") {
           broadcast({
             type: "toast",
             level: "error",
-            message: `No adapter matched file '${loc.file}' — cannot apply property edit.`,
+            message: "Cannot continue a reverted thread.",
           });
           return;
         }
-        const absPath = resolve(opts.projectRoot, loc.file);
-        void withFileLock(absPath, async () => {
-          try {
-            const source = await readFile(absPath, "utf8");
-            const result = adapter.applyPropertyEdit({
-              file: loc.file,
-              line: loc.line,
-              col: loc.col,
-              property: msg.property,
-              value: msg.value,
-              source,
-            });
-            if (!result) {
+        if (state.threadHasActiveRequest(thread.threadId)) {
+          broadcast({
+            type: "toast",
+            level: "error",
+            message: "Thread already has a request in flight.",
+          });
+          return;
+        }
+        const req: PendingRequest = {
+          id: msg.id,
+          kind: "prompt",
+          createdAt: Date.now(),
+          selection: parentResolved.selection,
+          prompt: msg.prompt,
+          path: parentResolved.path,
+        };
+        state.linkContinuation(msg.parentId, msg.id);
+        state.enqueue(req);
+        const continuation: ContinuationContext = {
+          threadId: thread.threadId,
+          parentId: msg.parentId,
+          previousPrompt: parentResolved.prompt,
+          previousSummary: parentResolved.summary,
+          previousEdits: thread.edits,
+        };
+        dispatchRequest(req, {
+          cwd: opts.projectRoot,
+          port,
+          onLog: (line) => console.log(line),
+          continuation,
+        });
+        return;
+      }
+      case "request_revert": {
+        console.log(`[revert] requested for thread ${msg.threadId}`);
+        const thread = state.getThread(msg.threadId);
+        if (!thread) {
+          broadcast({
+            type: "toast",
+            level: "error",
+            message: "Cannot revert: thread not found.",
+          });
+          return;
+        }
+        if (state.threadHasActiveRequest(thread.threadId)) {
+          broadcast({
+            type: "toast",
+            level: "error",
+            message: "Cannot revert while a request is in flight.",
+          });
+          return;
+        }
+        const snapshots = state.revertThread(thread.threadId);
+        if (!snapshots || snapshots.size === 0) {
+          console.log(`[revert] thread ${thread.threadId} has no snapshots`);
+          broadcast({
+            type: "toast",
+            level: "info",
+            message: "Nothing to revert (no snapshots captured for this thread).",
+          });
+          return;
+        }
+        console.log(
+          `[revert] restoring ${snapshots.size} file(s): ${[...snapshots.keys()].join(", ")}`,
+        );
+        void (async () => {
+          for (const [file, content] of snapshots) {
+            const verdict = await verifyFileSyntax(file, content, adapters);
+            if (!verdict.ok) {
               broadcast({
                 type: "toast",
                 level: "error",
-                message: `Adapter '${adapter.id}' does not support property edits — try a text prompt instead.`,
+                message: `Revert aborted: ${file} failed verification (${verdict.error.message}).`,
               });
               return;
             }
-            await writeFile(absPath, result.newSource, "utf8");
-            state.recordEdits(result.edits);
-            broadcast({ type: "edit_applied", edits: result.edits });
-          } catch (err) {
-            const message = (err as Error).message ?? String(err);
-            console.error("[sidecar] property edit failed:", err);
-            broadcast({
-              type: "toast",
-              level: "error",
-              message: `Property edit failed: ${message}`,
-            });
           }
-        });
+          const files: string[] = [];
+          for (const [file, content] of snapshots) {
+            await writeFile(file, content, "utf8");
+            files.push(file);
+          }
+          broadcast({ type: "request_reverted", threadId: thread.threadId, files });
+          diagnostics.schedule({ files, scope: "file" });
+        })();
         return;
       }
     }

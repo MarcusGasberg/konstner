@@ -23,6 +23,26 @@ export interface PropertyEditInput {
   source: string;
 }
 
+export interface VerifyError {
+  message: string;
+  line?: number;
+  col?: number;
+}
+
+export interface DiagnosticLite {
+  file: string;
+  line?: number;
+  col?: number;
+  severity: "error" | "warning" | "info";
+  message: string;
+}
+
+export interface DiagnosticsChecker {
+  id: string;
+  /** Run the checker; return every diagnostic it observes. */
+  run(projectRoot: string): Promise<DiagnosticLite[]>;
+}
+
 export interface FrameworkAdapter {
   /** Human-readable id, e.g. "svelte", "plain-html". */
   id: string;
@@ -41,4 +61,15 @@ export interface FrameworkAdapter {
   };
   /** Suggested file extension for newly extracted components. */
   componentExtension: string;
+  /**
+   * Optional: validate post-edit content for files this adapter owns.
+   * Return null if valid, or a VerifyError describing the syntax problem.
+   * If omitted, the server falls back to a generic TS/JS check by extension.
+   */
+  verifySyntax?(file: string, content: string): Promise<VerifyError | null> | VerifyError | null;
+  /**
+   * Optional: return a project-wide diagnostics checker.
+   * If omitted, the adapter contributes no Tier 2 diagnostics.
+   */
+  createDiagnosticsChecker?(projectRoot: string): DiagnosticsChecker | null;
 }

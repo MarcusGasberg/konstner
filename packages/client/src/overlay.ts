@@ -21,19 +21,46 @@ const STYLES = `
 }
 .section { margin-top: 12px; padding-top: 10px; border-top: 1px solid #1a1a22; }
 .section h3 { margin: 0 0 8px 0; font-size: 11px; color: #9aa; letter-spacing: 0.1em; text-transform: uppercase; }
-.prop-row { display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; }
-.prop-row label { font-size: 11px; color: #9aa; }
-.prop-row input[type="text"], .prop-row input[type="number"], .prop-row select {
+.extract-form label { font-size: 11px; color: #9aa; }
+.extract-form input[type="text"] {
   background: #111; color: #eee; border: 1px solid #333; border-radius: 4px;
   padding: 4px 6px; font-family: ui-monospace, monospace; font-size: 12px;
   width: 100%;
 }
-.prop-row input[type="color"] {
-  width: 28px; height: 22px; border: 1px solid #333; border-radius: 4px; padding: 0; background: transparent; cursor: pointer;
-}
-.color-group { display: flex; gap: 6px; align-items: center; }
-.color-group input[type="text"] { flex: 1; }
+.extract-form .prop-row { display: grid; grid-template-columns: 80px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; }
 .panel h3 { margin: 0 0 8px 0; font-size: 12px; color: #9aa; letter-spacing: 0.1em; text-transform: uppercase; }
+.history {
+  position: fixed; left: 16px; bottom: 16px; z-index: 2147483647;
+  width: 340px; max-height: calc(100vh - 120px); overflow-y: auto;
+  background: #0b0b0f; color: #eee; border: 1px solid #222;
+  border-radius: 12px; padding: 10px; font-size: 12px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+}
+.history[hidden] { display: none; }
+.history-title { margin: 0 0 8px 0; font-size: 11px; color: #9aa; letter-spacing: 0.1em; text-transform: uppercase; }
+.hist-row { display: grid; grid-template-columns: 10px 1fr; gap: 8px; padding: 8px 0; border-top: 1px solid #1a1a22; }
+.hist-row:first-of-type { border-top: none; }
+.hist-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: #4b5563; }
+.hist-row.loading .hist-dot { background: #f59e0b; animation: k-pulse 1s ease-in-out infinite; }
+.hist-row.done .hist-dot { background: #22c55e; }
+.hist-row.reverted .hist-dot { background: #6b7280; }
+.hist-turns { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.hist-turn { position: relative; padding-left: 12px; border-left: 2px solid #1f2937; }
+.hist-turn.turn-follow-up { border-left-color: #2563eb; }
+.hist-turn.turn-loading { border-left-color: #f59e0b; }
+.hist-turn-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #6b7280; margin-bottom: 2px; }
+.hist-turn.turn-follow-up .hist-turn-label { color: #60a5fa; }
+.hist-actions { display: flex; gap: 6px; margin-top: 6px; }
+.hist-actions button { background: transparent; color: #aaa; border: 1px solid #2a2a36; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; font-family: inherit; }
+.hist-actions button:hover:not(:disabled) { color: #eee; border-color: #3a3a46; }
+.hist-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+.hist-actions button.confirm { color: #fca5a5; border-color: #7f1d1d; }
+.hist-continue { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.hist-continue textarea { min-height: 48px; font-size: 12px; padding: 6px; }
+@keyframes k-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.hist-target { color: #93c5fd; font-family: ui-monospace, monospace; font-size: 11px; word-break: break-all; }
+.hist-prompt { color: #eee; margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+.hist-summary { color: #9aa; margin-top: 4px; font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 .row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
 .step-up { padding: 2px 8px; font-size: 12px; line-height: 1; }
 .step-up:disabled { opacity: 0.35; cursor: not-allowed; }
@@ -89,9 +116,224 @@ export function mountOverlay(opts: { port: number }) {
   panel.style.display = "none";
   shadow.appendChild(panel);
 
+  const historyEl = document.createElement("div");
+  historyEl.className = "history";
+  historyEl.hidden = true;
+  shadow.appendChild(historyEl);
+
   const ws = connectWs(opts.port);
   let currentSelection: ElementSelection | null = null;
   let selectedEl: HTMLElement | null = null;
+
+  interface HistoryEntry {
+    id: string;
+    threadId: string;
+    parentId?: string;
+    kind: "prompt" | "extract";
+    prompt: string;
+    target: string;
+    status: "loading" | "done" | "reverted";
+    summary?: string;
+    selection: ElementSelection | null;
+    path?: string;
+  }
+  const history: HistoryEntry[] = [];
+  const openContinueIds = new Set<string>();
+  const revertConfirmIds = new Set<string>();
+  const revertingThreadIds = new Set<string>();
+
+  function targetLabel(sel: ElementSelection): string {
+    const tag = `<${sel.tagName}>`;
+    return sel.loc ? `${tag} ${sel.loc.file}:${sel.loc.line}` : tag;
+  }
+
+  interface ThreadView {
+    root: HistoryEntry;
+    turns: HistoryEntry[]; // chronological: root first, continuations after
+  }
+
+  function groupThreads(): ThreadView[] {
+    const byThread = new Map<string, ThreadView>();
+    const order: string[] = [];
+    // history is newest-first; iterate reversed so we see root first and build chronological turns.
+    for (let i = history.length - 1; i >= 0; i--) {
+      const e = history[i];
+      let t = byThread.get(e.threadId);
+      if (!t) {
+        t = { root: e, turns: [] };
+        byThread.set(e.threadId, t);
+        order.push(e.threadId);
+      }
+      if (e.id === e.threadId) t.root = e;
+      t.turns.push(e);
+    }
+    // Newest thread first (by most recent turn).
+    return order
+      .map((id) => byThread.get(id)!)
+      .sort((a, b) => {
+        const aLast = history.findIndex((h) => h.threadId === a.root.threadId);
+        const bLast = history.findIndex((h) => h.threadId === b.root.threadId);
+        return aLast - bLast;
+      });
+  }
+
+  function renderHistory() {
+    const threads = groupThreads();
+    historyEl.hidden = threads.length === 0;
+    historyEl.innerHTML = "";
+    if (threads.length === 0) return;
+    const title = document.createElement("div");
+    title.className = "history-title";
+    title.textContent = "Requests";
+    historyEl.appendChild(title);
+
+    for (const thread of threads.slice(0, 20)) {
+      const root = thread.root;
+      const latest = thread.turns[thread.turns.length - 1];
+      const threadBusy = thread.turns.some((t) => t.status === "loading");
+      const threadReverted = thread.turns.some((t) => t.status === "reverted");
+      const rowStatus = threadReverted
+        ? "reverted"
+        : threadBusy
+        ? "loading"
+        : "done";
+
+      const row = document.createElement("div");
+      row.className = `hist-row ${rowStatus}`;
+      const dot = document.createElement("div");
+      dot.className = "hist-dot";
+      row.appendChild(dot);
+
+      const body = document.createElement("div");
+      const target = document.createElement("div");
+      target.className = "hist-target";
+      target.textContent = root.target;
+      body.appendChild(target);
+
+      const turnsEl = document.createElement("div");
+      turnsEl.className = "hist-turns";
+      thread.turns.forEach((turn, idx) => {
+        const turnEl = document.createElement("div");
+        const follow = idx > 0;
+        turnEl.className = `hist-turn${follow ? " turn-follow-up" : ""}${turn.status === "loading" ? " turn-loading" : ""}`;
+        if (follow) {
+          const lab = document.createElement("div");
+          lab.className = "hist-turn-label";
+          lab.textContent = `Follow-up ${idx}`;
+          turnEl.appendChild(lab);
+        }
+        const prompt = document.createElement("div");
+        prompt.className = "hist-prompt";
+        prompt.textContent = turn.prompt;
+        turnEl.appendChild(prompt);
+        if (turn.summary) {
+          const sum = document.createElement("div");
+          sum.className = "hist-summary";
+          sum.textContent = turn.summary;
+          turnEl.appendChild(sum);
+        }
+        turnsEl.appendChild(turnEl);
+      });
+      body.appendChild(turnsEl);
+
+      if (!threadReverted) {
+        const actions = document.createElement("div");
+        actions.className = "hist-actions";
+
+        const contBtn = document.createElement("button");
+        const contOpen = openContinueIds.has(root.threadId);
+        contBtn.textContent = contOpen ? "Cancel" : "Continue";
+        contBtn.disabled = threadBusy;
+        contBtn.addEventListener("click", () => {
+          if (contOpen) openContinueIds.delete(root.threadId);
+          else openContinueIds.add(root.threadId);
+          renderHistory();
+        });
+        actions.appendChild(contBtn);
+
+        const revBtn = document.createElement("button");
+        const confirming = revertConfirmIds.has(root.threadId);
+        const reverting = revertingThreadIds.has(root.threadId);
+        revBtn.textContent = reverting
+          ? "Reverting…"
+          : confirming
+          ? "Confirm revert?"
+          : "Revert";
+        if (confirming) revBtn.classList.add("confirm");
+        revBtn.disabled = threadBusy || reverting;
+        revBtn.addEventListener("click", () => {
+          if (revertConfirmIds.has(root.threadId)) {
+            revertConfirmIds.delete(root.threadId);
+            revertingThreadIds.add(root.threadId);
+            ws.send({ type: "request_revert", threadId: root.threadId });
+            renderHistory();
+            // Safety: if the server never responds, clear the reverting flag.
+            setTimeout(() => {
+              if (revertingThreadIds.delete(root.threadId)) renderHistory();
+            }, 10000);
+          } else {
+            revertConfirmIds.add(root.threadId);
+            renderHistory();
+            setTimeout(() => {
+              if (revertConfirmIds.delete(root.threadId)) renderHistory();
+            }, 3000);
+          }
+        });
+        actions.appendChild(revBtn);
+        body.appendChild(actions);
+
+        if (contOpen) {
+          const form = document.createElement("div");
+          form.className = "hist-continue";
+          const ta = document.createElement("textarea");
+          ta.placeholder = "Refine or follow up... (⌘↵ to send)";
+          form.appendChild(ta);
+          const sendBtn = document.createElement("button");
+          sendBtn.textContent = "Send follow-up";
+          sendBtn.className = "confirm";
+          const submitContinue = () => {
+            const val = ta.value.trim();
+            if (!val) return;
+            sendContinue(latest, val);
+            openContinueIds.delete(root.threadId);
+          };
+          sendBtn.addEventListener("click", submitContinue);
+          ta.addEventListener("keydown", (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submitContinue();
+            if (e.key === "Escape") {
+              openContinueIds.delete(root.threadId);
+              renderHistory();
+            }
+          });
+          form.appendChild(sendBtn);
+          body.appendChild(form);
+          queueMicrotask(() => ta.focus());
+        }
+      }
+
+      row.appendChild(body);
+      historyEl.appendChild(row);
+    }
+  }
+
+  function sendContinue(parent: HistoryEntry, prompt: string) {
+    const id = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    ws.send({ type: "request_continue", id, parentId: parent.id, prompt });
+    history.unshift({
+      id,
+      threadId: parent.threadId,
+      parentId: parent.id,
+      kind: "prompt",
+      prompt,
+      target: parent.target,
+      status: "loading",
+      selection: parent.selection,
+      path: parent.path,
+    });
+    renderHistory();
+  }
+
+  let panelOpen = false;
 
   const picker = new Picker(host, {
     onHover(el) {
@@ -112,20 +354,21 @@ export function mountOverlay(opts: { port: number }) {
       hoverBox.style.display = "none";
       drawSelectedBox();
       ws.send({ type: "selection_changed", selection: sel });
-      fab.classList.remove("active");
       renderPanel();
     },
   });
 
+  function togglePicker() {
+    if (picker.isActive()) picker.stop();
+    else picker.start();
+    renderPanel();
+  }
+
   fab.addEventListener("click", () => {
-    if (picker.isActive()) {
-      picker.stop();
-      fab.classList.remove("active");
-    } else {
-      picker.start();
-      fab.classList.add("active");
-      panel.style.display = "none";
-    }
+    panelOpen = !panelOpen;
+    if (panelOpen) picker.start();
+    else picker.stop();
+    renderPanel();
   });
 
   function drawSelectedBox() {
@@ -143,6 +386,15 @@ export function mountOverlay(opts: { port: number }) {
 
   window.addEventListener("scroll", drawSelectedBox, true);
   window.addEventListener("resize", drawSelectedBox);
+
+  // Picker may self-stop on Escape; keep the panel UI in sync.
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key === "Escape" && panelOpen) queueMicrotask(renderPanel);
+    },
+    true,
+  );
 
   // Arrow-up steps to annotated ancestor when the panel is open.
   window.addEventListener(
@@ -166,42 +418,83 @@ export function mountOverlay(opts: { port: number }) {
   );
 
   function renderPanel() {
-    if (!currentSelection) {
+    fab.classList.toggle("active", panelOpen);
+    if (!panelOpen) {
       panel.style.display = "none";
       return;
     }
-    const sel = currentSelection;
     panel.style.display = "block";
     panel.innerHTML = "";
 
+    const sel = currentSelection;
+    const picking = picker.isActive();
+
     const header = document.createElement("h3");
-    header.textContent = "Selected";
+    header.textContent = sel ? "Selected" : "Page";
     panel.appendChild(header);
 
     const row = document.createElement("div");
     row.className = "row";
-    const tagBadge = document.createElement("span");
-    tagBadge.className = "badge";
-    tagBadge.textContent = `<${sel.tagName}>`;
-    row.appendChild(tagBadge);
-    const parentBtn = document.createElement("button");
-    parentBtn.className = "ghost step-up";
-    parentBtn.textContent = "↑";
-    parentBtn.title = "Select parent (↑)";
-    parentBtn.disabled = !findNextAnnotatedAncestor(selectedEl);
-    parentBtn.addEventListener("click", stepUp);
-    row.appendChild(parentBtn);
+    if (sel) {
+      const tagBadge = document.createElement("span");
+      tagBadge.className = "badge";
+      tagBadge.textContent = `<${sel.tagName}>`;
+      row.appendChild(tagBadge);
+      const parentBtn = document.createElement("button");
+      parentBtn.className = "ghost step-up";
+      parentBtn.textContent = "↑";
+      parentBtn.title = "Select parent (↑)";
+      parentBtn.disabled = !findNextAnnotatedAncestor(selectedEl);
+      parentBtn.addEventListener("click", stepUp);
+      row.appendChild(parentBtn);
+    } else {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = location.pathname;
+      row.appendChild(badge);
+    }
+    const pickBtn = document.createElement("button");
+    pickBtn.className = "ghost";
+    pickBtn.textContent = picking
+      ? "Cancel"
+      : sel
+      ? "Pick another"
+      : "Pick element";
+    pickBtn.addEventListener("click", togglePicker);
+    row.appendChild(pickBtn);
+    if (sel) {
+      const clearBtn = document.createElement("button");
+      clearBtn.className = "ghost";
+      clearBtn.textContent = "Clear";
+      clearBtn.title = "Clear selection (send a page-level request)";
+      clearBtn.addEventListener("click", () => {
+        currentSelection = null;
+        selectedEl = null;
+        selectedBox.style.display = "none";
+        ws.send({ type: "selection_changed", selection: null });
+        renderPanel();
+      });
+      row.appendChild(clearBtn);
+    }
     panel.appendChild(row);
 
     const locEl = document.createElement("div");
     locEl.className = "loc";
-    locEl.textContent = sel.loc
-      ? `${sel.loc.file}:${sel.loc.line}:${sel.loc.col}`
-      : "(no source location — did the plugin transform this file?)";
+    if (sel) {
+      locEl.textContent = sel.loc
+        ? `${sel.loc.file}:${sel.loc.line}:${sel.loc.col}`
+        : "(no source location — did the plugin transform this file?)";
+    } else {
+      locEl.textContent = picking
+        ? "Click an element on the page, or describe a page-level change below."
+        : "No element selected — requests will target this page.";
+    }
     panel.appendChild(locEl);
 
     const ta = document.createElement("textarea");
-    ta.placeholder = "Describe the change... (⌘↵ to send)";
+    ta.placeholder = sel
+      ? "Describe the change... (⌘↵ to send)"
+      : "Describe a change to this page... (⌘↵ to send)";
     panel.appendChild(ta);
 
     const actions = document.createElement("div");
@@ -213,28 +506,18 @@ export function mountOverlay(opts: { port: number }) {
     ta.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit(ta.value);
     });
-    const extract = document.createElement("button");
-    extract.className = "ghost";
-    extract.textContent = "Extract…";
-    extract.title = "Extract this subtree into a new Svelte component";
-    extract.addEventListener("click", () => openExtractForm(sel, panel));
-    const close = document.createElement("button");
-    close.className = "ghost";
-    close.textContent = "Close";
-    close.addEventListener("click", () => {
-      currentSelection = null;
-      selectedEl = null;
-      selectedBox.style.display = "none";
-      panel.style.display = "none";
-    });
     actions.appendChild(send);
-    actions.appendChild(extract);
-    actions.appendChild(close);
+    if (sel) {
+      const extract = document.createElement("button");
+      extract.className = "ghost";
+      extract.textContent = "Extract…";
+      extract.title = "Extract this subtree into a new Svelte component";
+      extract.addEventListener("click", () => openExtractForm(sel, panel));
+      actions.appendChild(extract);
+    }
     panel.appendChild(actions);
 
-    if (sel.loc) {
-      panel.appendChild(buildPropertySection(sel, sendPropertyEdit));
-    }
+    queueMicrotask(() => ta.focus());
   }
 
   function openExtractForm(sel: ElementSelection, panelEl: HTMLElement) {
@@ -307,37 +590,72 @@ export function mountOverlay(opts: { port: number }) {
       selection: [sel],
       suggestedName: name,
     });
-    toast("info", `Extracting ${name}… Claude is working.`);
-  }
-
-  function sendPropertyEdit(property: string, value: string) {
-    if (!currentSelection) return;
-    ws.send({
-      type: "apply_property_edit",
-      selection: currentSelection,
-      property,
-      value,
+    history.unshift({
+      id,
+      threadId: id,
+      kind: "extract",
+      prompt: `Extract → ${name}`,
+      target: targetLabel(sel),
+      status: "loading",
+      selection: sel,
     });
+    renderHistory();
   }
 
   function submit(prompt: string) {
-    if (!currentSelection || !prompt.trim()) return;
+    const trimmed = prompt.trim();
+    if (!trimmed) return;
     const id = `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const sel = currentSelection;
+    const path = location.pathname;
     ws.send({
       type: "request_change",
       id,
-      selection: currentSelection,
-      prompt: prompt.trim(),
+      selection: sel,
+      prompt: trimmed,
+      path,
     });
-    toast("info", "Queued for Claude — run a session to process it.");
+    history.unshift({
+      id,
+      threadId: id,
+      kind: "prompt",
+      prompt: trimmed,
+      target: sel ? targetLabel(sel) : `page ${path}`,
+      status: "loading",
+      selection: sel,
+      path,
+    });
+    renderHistory();
+    const ta = panel.querySelector("textarea");
+    if (ta instanceof HTMLTextAreaElement) ta.value = "";
   }
 
   ws.onMessage((msg: ServerToClient) => {
-    if (msg.type === "toast") toast(msg.level, msg.message);
-    else if (msg.type === "request_resolved")
-      toast("success", msg.summary || "Done.");
-    else if (msg.type === "edit_applied")
+    if (msg.type === "toast") {
+      toast(msg.level, msg.message);
+      if (revertingThreadIds.size > 0) {
+        revertingThreadIds.clear();
+        renderHistory();
+      }
+    } else if (msg.type === "request_resolved") {
+      const entry = history.find((h) => h.id === msg.id);
+      if (entry) {
+        entry.status = "done";
+        entry.summary = msg.summary;
+        renderHistory();
+      } else {
+        toast("success", msg.summary || "Done.");
+      }
+    } else if (msg.type === "edit_applied")
       toast("success", `Applied ${msg.edits.length} edit(s).`);
+    else if (msg.type === "request_reverted") {
+      for (const entry of history) {
+        if (entry.threadId === msg.threadId) entry.status = "reverted";
+      }
+      revertingThreadIds.delete(msg.threadId);
+      renderHistory();
+      toast("success", `Reverted ${msg.files.length} file(s).`);
+    }
   });
 
   function toast(level: "info" | "success" | "error", message: string) {
@@ -349,6 +667,7 @@ export function mountOverlay(opts: { port: number }) {
   }
 
   document.body.appendChild(host);
+  renderPanel();
   return {
     destroy() {
       ws.close();
@@ -383,168 +702,3 @@ function findByLoc(kLocId: string): HTMLElement | null {
   );
 }
 
-interface PropertyDef {
-  label: string;
-  property: string;
-  kind: "text" | "color" | "select";
-  options?: string[];
-  placeholder?: string;
-}
-
-const SECTIONS: Array<{ title: string; props: PropertyDef[] }> = [
-  {
-    title: "Layout",
-    props: [
-      {
-        label: "display",
-        property: "display",
-        kind: "select",
-        options: ["", "block", "inline", "inline-block", "flex", "grid", "none"],
-      },
-      { label: "width", property: "width", kind: "text", placeholder: "auto" },
-      { label: "height", property: "height", kind: "text", placeholder: "auto" },
-      { label: "gap", property: "gap", kind: "text", placeholder: "0" },
-    ],
-  },
-  {
-    title: "Spacing",
-    props: [
-      { label: "padding", property: "padding", kind: "text", placeholder: "0" },
-      { label: "margin", property: "margin", kind: "text", placeholder: "0" },
-      {
-        label: "radius",
-        property: "border-radius",
-        kind: "text",
-        placeholder: "0",
-      },
-    ],
-  },
-  {
-    title: "Typography",
-    props: [
-      {
-        label: "font-size",
-        property: "font-size",
-        kind: "text",
-        placeholder: "14px",
-      },
-      {
-        label: "weight",
-        property: "font-weight",
-        kind: "select",
-        options: ["", "400", "500", "600", "700", "800"],
-      },
-      { label: "color", property: "color", kind: "color" },
-    ],
-  },
-  {
-    title: "Background",
-    props: [
-      { label: "background", property: "background-color", kind: "color" },
-      { label: "border", property: "border", kind: "text", placeholder: "none" },
-    ],
-  },
-];
-
-function buildPropertySection(
-  sel: {
-    computedStyles: Record<string, string>;
-  },
-  onChange: (property: string, value: string) => void,
-): HTMLElement {
-  const root = document.createElement("div");
-  for (const section of SECTIONS) {
-    const wrap = document.createElement("div");
-    wrap.className = "section";
-    const h = document.createElement("h3");
-    h.textContent = section.title;
-    wrap.appendChild(h);
-    for (const def of section.props) {
-      wrap.appendChild(buildPropRow(def, sel.computedStyles, onChange));
-    }
-    root.appendChild(wrap);
-  }
-  return root;
-}
-
-function buildPropRow(
-  def: PropertyDef,
-  styles: Record<string, string>,
-  onChange: (property: string, value: string) => void,
-): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "prop-row";
-  const lab = document.createElement("label");
-  lab.textContent = def.label;
-  row.appendChild(lab);
-
-  const current = styles[def.property] ?? "";
-  const debouncedChange = debounce(onChange, 300);
-
-  if (def.kind === "select") {
-    const sel = document.createElement("select");
-    for (const opt of def.options ?? []) {
-      const o = document.createElement("option");
-      o.value = opt;
-      o.textContent = opt || "(unset)";
-      if (opt === current) o.selected = true;
-      sel.appendChild(o);
-    }
-    sel.addEventListener("change", () => onChange(def.property, sel.value));
-    row.appendChild(sel);
-    return row;
-  }
-
-  if (def.kind === "color") {
-    const group = document.createElement("div");
-    group.className = "color-group";
-    const hex = rgbToHex(current);
-    const picker = document.createElement("input");
-    picker.type = "color";
-    picker.value = hex || "#000000";
-    const text = document.createElement("input");
-    text.type = "text";
-    text.value = current;
-    text.placeholder = "#000 or rgb(...)";
-    picker.addEventListener("input", () => {
-      text.value = picker.value;
-      debouncedChange(def.property, picker.value);
-    });
-    text.addEventListener("input", () => {
-      debouncedChange(def.property, text.value);
-    });
-    group.appendChild(picker);
-    group.appendChild(text);
-    row.appendChild(group);
-    return row;
-  }
-
-  const input = document.createElement("input");
-  input.type = "text";
-  input.value = current;
-  if (def.placeholder) input.placeholder = def.placeholder;
-  input.addEventListener("input", () => {
-    debouncedChange(def.property, input.value);
-  });
-  row.appendChild(input);
-  return row;
-}
-
-function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
-  let t: ReturnType<typeof setTimeout> | null = null;
-  return ((...args: unknown[]) => {
-    if (t) clearTimeout(t);
-    t = setTimeout(() => fn(...(args as Parameters<T>)), ms);
-  }) as T;
-}
-
-function rgbToHex(raw: string): string {
-  if (!raw) return "";
-  if (raw.startsWith("#")) return raw.length === 7 ? raw : "";
-  const m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(raw);
-  if (!m) return "";
-  const [r, g, b] = [m[1], m[2], m[3]].map((n) =>
-    Number(n).toString(16).padStart(2, "0"),
-  );
-  return `#${r}${g}${b}`;
-}

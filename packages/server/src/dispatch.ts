@@ -1,10 +1,19 @@
 import { spawn } from "node:child_process";
-import type { PendingRequest } from "@konstner/core";
+import type { PendingRequest, TextEdit } from "@konstner/core";
+
+export interface ContinuationContext {
+  threadId: string;
+  parentId: string;
+  previousPrompt?: string;
+  previousSummary?: string;
+  previousEdits: TextEdit[];
+}
 
 export interface DispatchOptions {
   cwd: string;
   port: number;
   onLog?: (line: string) => void;
+  continuation?: ContinuationContext;
 }
 
 const PROMPT_SYSTEM = `You are acting as the executor for Konstner — a live in-browser design tool.
@@ -19,6 +28,7 @@ Rules:
 - Edit the file identified by the selection's loc unless the change clearly requires editing another file.
 - Do not create new files unless the user explicitly asked to extract a component.
 - Do not run the test suite, git commands, or other tools.
+- If apply_text_edit throws an error that says "edits rejected — post-edit syntax check failed", the file was NOT modified. Re-read the file fresh, work out what went wrong (often an off-by-one column, an unclosed tag, or a dropped brace), and retry with a corrected edit. After two failed attempts, call resolve_request with an error summary and stop.
 - When finished, call resolve_request and stop.`;
 
 const EXTRACT_SYSTEM = `You are acting as the executor for Konstner — a live in-browser design tool.
@@ -82,27 +92,62 @@ export function dispatchRequest(
   req: PendingRequest,
   opts: DispatchOptions,
 ): void {
-  const sel = Array.isArray(req.selection) ? req.selection[0] : req.selection;
-  const loc = sel.loc
+  const sel = req.selection
+    ? Array.isArray(req.selection)
+      ? req.selection[0]
+      : req.selection
+    : null;
+  const loc = sel?.loc
     ? `${sel.loc.file}:${sel.loc.line}:${sel.loc.col}`
     : "(no source location)";
 
   const isExtract = req.kind === "extract";
+  const cont = opts.continuation;
 
-  const userBlock = isExtract
-    ? `REQUEST_ID: ${req.id}
+  const continuationHeader = cont
+    ? `THREAD_ID: ${cont.threadId}
+CONTINUES: ${cont.parentId}
+PREVIOUS_PROMPT: ${cont.previousPrompt ?? "(unknown)"}
+PREVIOUS_SUMMARY: ${cont.previousSummary ?? "(unknown)"}
+PREVIOUS_EDITS: ${JSON.stringify(
+        cont.previousEdits.map((e) => ({
+          file: e.file,
+          startLine: e.startLine,
+          endLine: e.endLine,
+        })),
+      )}
+
+You are iterating on a prior request in the same thread. The prior edits are already on disk. Re-Read any file before editing it; don't re-apply prior edits.
+`
+    : "";
+
+  let userBlock: string;
+  if (isExtract) {
+    if (!sel) {
+      throw new Error("extract request requires a selection");
+    }
+    userBlock = `REQUEST_ID: ${req.id}
 KIND: extract
 TAG: <${sel.tagName}>
 SOURCE: ${loc}
 SUGGESTED_NAME: ${req.suggestedName ?? "Extracted"}
 
-Extract this subtree into a new component. Follow the workflow in the system prompt. When done, call mcp__konstner__resolve_request("${req.id}", "<summary>").`
-    : `REQUEST_ID: ${req.id}
-TAG: <${sel.tagName}>
+Extract this subtree into a new component. Follow the workflow in the system prompt. When done, call mcp__konstner__resolve_request("${req.id}", "<summary>").`;
+  } else if (sel) {
+    userBlock = `REQUEST_ID: ${req.id}
+${continuationHeader}TAG: <${sel.tagName}>
 SOURCE: ${loc}
 PROMPT: ${req.prompt}
 
 Resolve this request by editing source and calling mcp__konstner__resolve_request("${req.id}", "<one-sentence summary>").`;
+  } else {
+    userBlock = `REQUEST_ID: ${req.id}
+${continuationHeader}SCOPE: page
+PAGE_PATH: ${req.path ?? "(unknown)"}
+PROMPT: ${req.prompt}
+
+No specific element was selected; treat this as a page-level request. Locate the relevant source files under the project (route/page components matching PAGE_PATH are a good starting point) and edit as needed. When done, call mcp__konstner__resolve_request("${req.id}", "<one-sentence summary>").`;
+  }
 
   const baseTools = [
     "mcp__konstner__get_selection",
@@ -141,7 +186,11 @@ Resolve this request by editing source and calling mcp__konstner__resolve_reques
 
   const child = spawn("claude", args, {
     cwd: opts.cwd,
-    env: { ...process.env, KONSTNER_PORT: String(opts.port) },
+    env: {
+      ...process.env,
+      KONSTNER_PORT: String(opts.port),
+      KONSTNER_REQUEST_ID: req.id,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
 

@@ -25,7 +25,11 @@
   "bin": {
     "konstner-mcp": "./bin/konstner-mcp.js"
   },
-  "files": ["dist", "src", "bin"],
+  "files": [
+    "dist",
+    "src",
+    "bin"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc"
@@ -40,6 +44,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.12",
+    "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }

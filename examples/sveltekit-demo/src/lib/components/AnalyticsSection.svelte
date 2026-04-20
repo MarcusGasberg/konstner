@@ -73,7 +73,7 @@
       <h3 class="text-sm font-semibold text-foreground">Sessions & Page Views</h3>
       <p class="text-xs text-muted-foreground mt-0.5">Daily traffic breakdown</p>
     </div>
-    <svg viewBox="0 0 {BW} {BH}" class="w-full h-[220px]" preserveAspectRatio="none">
+    <svg viewBox="0 0 {BW} {BH}" class="w-full h-[220px]">one">
       {#each barTicks as t}
         <line
           x1={bPad.l}
