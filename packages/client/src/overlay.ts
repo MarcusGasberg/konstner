@@ -1,6 +1,7 @@
 import type { ElementSelection, ServerToClient } from "@konstner/core";
 import { Picker, describe } from "./picker.js";
 import { connectWs } from "./ws.js";
+import { scanPage } from "./scan.js";
 
 const STYLES = `
 :host { all: initial; }
@@ -83,6 +84,26 @@ button.ghost { background: transparent; color: #aaa; border: 1px solid #333; pad
   transition: all 50ms linear;
 }
 .outline.selected { border-color: #22c55e; background: rgba(34, 197, 94, 0.08); }
+.scan-btn { background: transparent; color: #9aa; border: 1px solid #333; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+.scan-btn:hover { color: #eee; border-color: #555; }
+.scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.scan-results {
+  position: fixed; right: 16px; bottom: 72px; z-index: 2147483647;
+  width: 360px; max-height: calc(100vh - 120px); overflow-y: auto;
+  background: #0b0b0f; color: #eee; border: 1px solid #222;
+  border-radius: 12px; padding: 12px; font-size: 13px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+}
+.scan-results[hidden] { display: none; }
+.scan-title { margin: 0 0 8px 0; font-size: 11px; color: #9aa; letter-spacing: 0.1em; text-transform: uppercase; }
+.scan-finding { padding: 8px 0; border-top: 1px solid #1a1a22; }
+.scan-finding:first-of-type { border-top: none; }
+.scan-rule { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.scan-rule.error { color: #ef4444; }
+.scan-rule.warning { color: #f59e0b; }
+.scan-rule.info { color: #60a5fa; }
+.scan-message { color: #ccc; font-size: 12px; margin-top: 2px; }
+.scan-stats { color: #6b7280; font-size: 11px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #1a1a22; }
 `;
 
 export function mountOverlay(opts: { port: number }) {
@@ -120,6 +141,11 @@ export function mountOverlay(opts: { port: number }) {
   historyEl.className = "history";
   historyEl.hidden = true;
   shadow.appendChild(historyEl);
+
+  const scanResultsEl = document.createElement("div");
+  scanResultsEl.className = "scan-results";
+  scanResultsEl.hidden = true;
+  shadow.appendChild(scanResultsEl);
 
   const ws = connectWs(opts.port);
   let currentSelection: ElementSelection | null = null;
@@ -195,8 +221,8 @@ export function mountOverlay(opts: { port: number }) {
       const rowStatus = threadReverted
         ? "reverted"
         : threadBusy
-        ? "loading"
-        : "done";
+          ? "loading"
+          : "done";
 
       const row = document.createElement("div");
       row.className = `hist-row ${rowStatus}`;
@@ -257,8 +283,8 @@ export function mountOverlay(opts: { port: number }) {
         revBtn.textContent = reverting
           ? "Reverting…"
           : confirming
-          ? "Confirm revert?"
-          : "Revert";
+            ? "Confirm revert?"
+            : "Revert";
         if (confirming) revBtn.classList.add("confirm");
         revBtn.disabled = threadBusy || reverting;
         revBtn.addEventListener("click", () => {
@@ -458,8 +484,8 @@ export function mountOverlay(opts: { port: number }) {
     pickBtn.textContent = picking
       ? "Cancel"
       : sel
-      ? "Pick another"
-      : "Pick element";
+        ? "Pick another"
+        : "Pick element";
     pickBtn.addEventListener("click", togglePicker);
     row.appendChild(pickBtn);
     if (sel) {
@@ -501,7 +527,7 @@ export function mountOverlay(opts: { port: number }) {
     actions.className = "actions";
     const send = document.createElement("button");
     send.className = "primary";
-    send.textContent = "Send to Claude";
+    send.textContent = "Send";
     send.addEventListener("click", () => submit(ta.value));
     ta.addEventListener("keydown", (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") submit(ta.value);
@@ -515,6 +541,12 @@ export function mountOverlay(opts: { port: number }) {
       extract.addEventListener("click", () => openExtractForm(sel, panel));
       actions.appendChild(extract);
     }
+    const scanBtn = document.createElement("button");
+    scanBtn.className = "ghost scan-btn";
+    scanBtn.textContent = "Scan";
+    scanBtn.title = "Scan page for design issues";
+    scanBtn.addEventListener("click", () => runPageScan(scanBtn));
+    actions.appendChild(scanBtn);
     panel.appendChild(actions);
 
     queueMicrotask(() => ta.focus());
@@ -630,6 +662,87 @@ export function mountOverlay(opts: { port: number }) {
     if (ta instanceof HTMLTextAreaElement) ta.value = "";
   }
 
+  function runPageScan(btn: HTMLButtonElement) {
+    btn.disabled = true;
+    btn.textContent = "Scanning…";
+
+    // Use requestIdleCallback if available, otherwise setTimeout
+    const schedule =
+      typeof requestIdleCallback !== "undefined"
+        ? requestIdleCallback
+        : (cb: () => void) => setTimeout(cb, 50);
+
+    schedule(() => {
+      try {
+        const result = scanPage();
+        renderScanResults(result);
+        ws.send({
+          type: "scan_page",
+          id: `scan_${Date.now().toString(36)}`,
+          findings: result.findings,
+        });
+      } catch (err) {
+        toast("error", `Scan failed: ${(err as Error).message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Scan";
+      }
+    });
+  }
+
+  function renderScanResults(result: import("./scan.js").ScanResult) {
+    scanResultsEl.hidden = false;
+    scanResultsEl.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.className = "scan-title";
+    title.textContent = `Design Scan (${result.stats.elementsScanned} elements)`;
+    scanResultsEl.appendChild(title);
+
+    if (result.findings.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "scan-message";
+      empty.textContent = "No design issues found.";
+      scanResultsEl.appendChild(empty);
+    } else {
+      for (const finding of result.findings) {
+        const row = document.createElement("div");
+        row.className = "scan-finding";
+        const rule = document.createElement("div");
+        rule.className = `scan-rule ${finding.severity}`;
+        rule.textContent = finding.rule;
+        row.appendChild(rule);
+        const msg = document.createElement("div");
+        msg.className = "scan-message";
+        msg.textContent = finding.message;
+        row.appendChild(msg);
+        scanResultsEl.appendChild(row);
+      }
+    }
+
+    const stats = document.createElement("div");
+    stats.className = "scan-stats";
+    const headingSummary =
+      result.stats.headings.length > 0
+        ? `Headings: ${result.stats.headings.map((h) => `h${h.level}`).join(", ")}`
+        : "No headings found";
+    const fontSummary = Array.from(result.stats.fontFamilies.entries())
+      .slice(0, 3)
+      .map(([f, c]) => `${f} (${c})`)
+      .join(", ");
+    stats.textContent = `${headingSummary} | Fonts: ${fontSummary || "none"} | Centered: ${result.stats.centeredElements}`;
+    scanResultsEl.appendChild(stats);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "ghost";
+    closeBtn.textContent = "Close";
+    closeBtn.style.marginTop = "8px";
+    closeBtn.addEventListener("click", () => {
+      scanResultsEl.hidden = true;
+    });
+    scanResultsEl.appendChild(closeBtn);
+  }
+
   ws.onMessage((msg: ServerToClient) => {
     if (msg.type === "toast") {
       toast(msg.level, msg.message);
@@ -701,4 +814,3 @@ function findByLoc(kLocId: string): HTMLElement | null {
     `[data-k-loc="${CSS.escape(kLocId)}"]`,
   );
 }
-

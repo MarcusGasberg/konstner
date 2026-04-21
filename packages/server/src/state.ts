@@ -3,7 +3,15 @@ import type {
   ElementSelection,
   PendingRequest,
   TextEdit,
+  DesignFlag,
 } from "@konstner/core";
+
+export interface DesignFindingLite {
+  rule: string;
+  severity: "error" | "warning" | "info";
+  message: string;
+  file?: string;
+}
 
 export interface ResolvedRequest {
   id: string;
@@ -22,6 +30,8 @@ export interface ThreadRecord {
   edits: TextEdit[];
   status: "active" | "resolved" | "reverted";
   summary?: string;
+  designFindings: DesignFindingLite[];
+  autoFixIterations: number;
 }
 
 export class ShellState {
@@ -31,15 +41,25 @@ export class ShellState {
   recentEdits: TextEdit[] = [];
   threads = new Map<string, ThreadRecord>();
   requestToThread = new Map<string, string>();
+  private pendingRuntimeFlags: DesignFlag[] = [];
 
   setSelection(sel: ElementSelection | null) {
     this.currentSelection = sel;
+    this.pendingRuntimeFlags = sel?.designFlags ?? [];
   }
 
   enqueue(req: PendingRequest) {
     this.pending.push(req);
     if (!this.requestToThread.has(req.id)) {
       this.startThread(req.id);
+    }
+    // Attach runtime flags from the current selection to this request's thread
+    if (this.pendingRuntimeFlags.length > 0) {
+      const sel = Array.isArray(req.selection) ? req.selection[0] : req.selection;
+      const flags = sel?.designFlags ?? this.pendingRuntimeFlags;
+      if (flags.length > 0) {
+        this.recordRuntimeDesignFindings(req.id, flags);
+      }
     }
   }
 
@@ -52,6 +72,8 @@ export class ShellState {
       snapshots: new Map(),
       edits: [],
       status: "active",
+      designFindings: [],
+      autoFixIterations: 0,
     };
     this.threads.set(rootId, rec);
     this.requestToThread.set(rootId, rootId);
@@ -141,6 +163,48 @@ export class ShellState {
     const rec = this.threads.get(threadId);
     if (!rec) return false;
     return rec.requestIds.some((id) => this.pending.some((p) => p.id === id));
+  }
+
+  recordDesignFindings(requestId: string, findings: DesignFindingLite[]) {
+    const rec = this.getThreadForRequest(requestId);
+    if (!rec) return;
+    rec.designFindings.push(...findings);
+  }
+
+  recordRuntimeDesignFindings(requestId: string, flags: DesignFlag[]) {
+    const rec = this.getThreadForRequest(requestId);
+    if (!rec) return;
+    for (const f of flags) {
+      // Deduplicate: don't add the same rule twice
+      const exists = rec.designFindings.some(
+        (df) => df.rule === f.rule && df.message === f.message,
+      );
+      if (!exists) {
+        rec.designFindings.push({
+          rule: f.rule,
+          severity: f.severity,
+          message: f.message,
+        });
+      }
+    }
+  }
+
+  clearDesignFindings(requestId: string) {
+    const rec = this.getThreadForRequest(requestId);
+    if (!rec) return;
+    rec.designFindings = [];
+  }
+
+  incrementAutoFixIteration(requestId: string): number {
+    const rec = this.getThreadForRequest(requestId);
+    if (!rec) return 0;
+    rec.autoFixIterations++;
+    return rec.autoFixIterations;
+  }
+
+  getAutoFixIteration(requestId: string): number {
+    const rec = this.getThreadForRequest(requestId);
+    return rec?.autoFixIterations ?? 0;
   }
 
   recordEdits(edits: TextEdit[]) {

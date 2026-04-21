@@ -4,9 +4,10 @@ import { applySveltePropertyEdit } from "@konstner/server/adapters/svelte-rewrit
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { ADAPTER_DESIGN_PROMPT } from "./design-prompt.js";
 
-const CHANGE_PROMPT = `You are editing a Svelte 5 component. Preserve <script>/<style> blocks; modify only the requested element's attributes, classes, or children. Use runes when adding state.`;
-const EXTRACT_PROMPT = `Extract the given subtree into a new Svelte 5 component under src/lib/components/. Use <script lang="ts"> with $props(). Replace the original subtree with an import + usage.`;
+const CHANGE_PROMPT = `You are editing a Svelte 5 component. Preserve <script>/<style> blocks; modify only the requested element's attributes, classes, or children. Use runes when adding state.${ADAPTER_DESIGN_PROMPT}`;
+const EXTRACT_PROMPT = `Extract the given subtree into a new Svelte 5 component under src/lib/components/. Use <script lang="ts"> with $props(). Replace the original subtree with an import + usage.${ADAPTER_DESIGN_PROMPT}`;
 
 // Skip components (<Foo>) and svelte: namespaces (<svelte:head>) — we only
 // annotate native HTML elements, which in Svelte always start lowercase.

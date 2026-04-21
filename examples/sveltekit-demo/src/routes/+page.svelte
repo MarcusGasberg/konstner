@@ -30,7 +30,7 @@
   <div class="flex flex-col flex-1 overflow-hidden">
     <TopBar title={sectionTitles[activeSection]} />
 
-    <main class="flex-1 overflow-y-auto p-6">
+    <main class="flex-1 overflow-y-auto p-6 bg-backgrounk">
       {#if activeSection === "dashboard"}
         <div class="flex flex-col gap-6 max-w-7xl mx-auto" style="display: flex">
           <StatCards />

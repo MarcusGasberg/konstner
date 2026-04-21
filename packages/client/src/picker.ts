@@ -1,4 +1,4 @@
-import type { ElementSelection, SourceLoc } from "@konstner/core";
+import type { ElementSelection, SourceLoc, DesignFlag } from "@konstner/core";
 
 export interface PickerCallbacks {
   onHover(el: HTMLElement | null): void;
@@ -9,6 +9,7 @@ const RELEVANT_STYLES = [
   "display",
   "color",
   "background-color",
+  "background-image",
   "font-size",
   "font-family",
   "font-weight",
@@ -21,6 +22,7 @@ const RELEVANT_STYLES = [
   "height",
   "flex",
   "gap",
+  "box-shadow",
 ];
 
 export class Picker {
@@ -90,6 +92,145 @@ export class Picker {
   }
 }
 
+// ── Runtime Design Detection ─────────────────────────────────────────
+
+function isCardLike(el: HTMLElement): boolean {
+  const cs = getComputedStyle(el);
+  const hasRadius = parseFloat(cs.borderRadius) > 0;
+  const hasPadding = ["paddingTop", "paddingRight", "paddingBottom", "paddingLeft"].some(
+    (p) => parseFloat(cs[p as any]) >= 8,
+  );
+  const hasBorder = ["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"].some(
+    (b) => parseFloat(cs[b as any]) > 0,
+  );
+  const hasShadow = cs.boxShadow && cs.boxShadow !== "none";
+  const hasBg =
+    cs.backgroundColor &&
+    cs.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+    cs.backgroundColor !== "transparent";
+
+  let score = 0;
+  if (hasRadius) score++;
+  if (hasPadding) score++;
+  if (hasBorder) score++;
+  if (hasShadow) score++;
+  if (hasBg) score++;
+
+  return score >= 2;
+}
+
+function countNestedCards(el: HTMLElement): number {
+  let count = 0;
+  let node: HTMLElement | null = el.parentElement;
+  while (node && count < 8) {
+    if (isCardLike(node)) count++;
+    node = node.parentElement;
+  }
+  return count;
+}
+
+function detectRuntimeFlags(el: HTMLElement): DesignFlag[] {
+  const flags: DesignFlag[] = [];
+
+  const nestedCardCount = countNestedCards(el);
+  if (nestedCardCount >= 2) {
+    flags.push({
+      rule: "nested-cards",
+      severity: "warning",
+      message: `Detected ${nestedCardCount} card-like containers nested in ancestor chain. Flatten the hierarchy — use spacing, typography, and dividers instead.`,
+    });
+  }
+
+  const cs = getComputedStyle(el);
+
+  // Gradient text
+  if (cs.backgroundClip === "text" || cs.webkitBackgroundClip === "text") {
+    const bgImg = cs.backgroundImage;
+    if (bgImg && bgImg.includes("gradient")) {
+      flags.push({
+        rule: "gradient-text",
+        severity: "warning",
+        message: "Gradient text kills scannability. Use solid colors for text.",
+      });
+    }
+  }
+
+  // AI gradient palette (purple/violet/cyan)
+  const bgImg = cs.backgroundImage;
+  if (bgImg && bgImg.includes("gradient")) {
+    const lower = bgImg.toLowerCase();
+    const hasPurple = /purple|violet|rgb\(138\s*,\s*43\s*,\s*226\)|#8b5cf6|#a855f7|#9333ea/.test(lower);
+    const hasCyan = /cyan|teal|#06b6d4|#22d3ee|#0891b2/.test(lower);
+    if (hasPurple || hasCyan) {
+      flags.push({
+        rule: "ai-gradient-palette",
+        severity: "warning",
+        message: "AI color palette detected: purple/violet/cyan gradient. Choose a distinctive, intentional palette.",
+      });
+    }
+  }
+
+  // Pure black background
+  if (cs.backgroundColor === "rgb(0, 0, 0)" || cs.backgroundColor === "#000000") {
+    flags.push({
+      rule: "pure-black-bg",
+      severity: "info",
+      message: "Pure #000000 as a background looks harsh and unnatural. Tint it slightly toward your brand hue for a more refined feel.",
+    });
+  }
+
+  // Tiny body text
+  const fontSizePx = parseFloat(cs.fontSize);
+  if (fontSizePx < 14 && fontSizePx > 0) {
+    flags.push({
+      rule: "tiny-body-text",
+      severity: "warning",
+      message: `Body text at ${Math.round(fontSizePx)}px is too small. Use at least 14px for body content, 16px is ideal.`,
+    });
+  }
+
+  // Tight line-height
+  const lineHeight = parseFloat(cs.lineHeight);
+  const fontSize = parseFloat(cs.fontSize);
+  if (fontSize > 0 && lineHeight > 0) {
+    const ratio = lineHeight / fontSize;
+    if (ratio < 1.3) {
+      flags.push({
+        rule: "tight-line-height",
+        severity: "warning",
+        message: `Line height of ${ratio.toFixed(2)} is too tight. Use 1.5 to 1.7 for body text so lines have room to breathe.`,
+      });
+    }
+  }
+
+  // Cramped padding
+  const padTop = parseFloat(cs.paddingTop);
+  const padRight = parseFloat(cs.paddingRight);
+  const padBottom = parseFloat(cs.paddingBottom);
+  const padLeft = parseFloat(cs.paddingLeft);
+  if (padTop < 8 && padRight < 8 && padBottom < 8 && padLeft < 8) {
+    // Only flag if element has border or background
+    const hasBorder = ["borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth"].some(
+      (b) => parseFloat(cs[b as any]) > 0,
+    );
+    const hasBg =
+      cs.backgroundColor &&
+      cs.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+      cs.backgroundColor !== "transparent";
+    if (hasBorder || hasBg) {
+      flags.push({
+        rule: "cramped-padding",
+        severity: "info",
+        message: "Padding is too cramped. Add at least 8px (ideally 12–16px) inside bordered or colored containers.",
+      });
+    }
+  }
+
+  return flags;
+}
+
+// ── Element Description ──────────────────────────────────────────────
+
 export function describe(el: HTMLElement): ElementSelection {
   const kLocId = el.getAttribute("data-k-loc") ?? "";
   return {
@@ -99,6 +240,7 @@ export function describe(el: HTMLElement): ElementSelection {
     outerHTML: el.outerHTML.slice(0, 4000),
     computedStyles: pickStyles(el),
     ancestors: ancestors(el),
+    designFlags: detectRuntimeFlags(el),
   };
 }
 

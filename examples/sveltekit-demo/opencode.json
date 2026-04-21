@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "konstner": {
+      "type": "local",
+      "enabled": true,
+      "command": [
+        "node",
+        "/home/marcusg/source/repos/konstner/packages/server/dist/mcp.js"
+      ],
+      "environment": {
+        "KONSTNER_PORT": "5177"
+      }
+    }
+  }
+}

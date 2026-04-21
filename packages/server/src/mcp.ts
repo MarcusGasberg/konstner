@@ -92,6 +92,18 @@ const tools = [
       "Return recent text edits applied through Konstner (for audit / undo context).",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "check_design",
+    description:
+      "Run design anti-pattern detection on a source file. Returns a list of issues such as low contrast, AI gradient palettes, nested cards, overused fonts, etc. Use this after apply_text_edit to verify your changes before resolving.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file: { type: "string", description: "Absolute path to the file to check" },
+      },
+      required: ["file"],
+    },
+  },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));

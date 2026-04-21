@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { WebSocketServer, WebSocket } from "ws";
+import { checkDesign } from "./design-check/index.js";
 import {
   DEFAULT_PORT,
   WS_PATH,
@@ -8,6 +9,7 @@ import {
   type ServerToClient,
   type PendingRequest,
   type FrameworkAdapter,
+  type ProviderAdapter,
 } from "@konstner/core";
 import { ShellState } from "./state.js";
 import { applyTextEdits } from "./edits.js";
@@ -23,11 +25,21 @@ import type {
   GetSelectionResult,
 } from "./rpc.js";
 
+export interface DesignCheckConfig {
+  enabled: boolean;
+  autoFixMaxLoops: number;
+  strict: boolean;
+}
+
 export interface SidecarOptions {
   port?: number;
   projectRoot: string;
   /** Adapters used for post-edit syntax verification and Tier 2 diagnostics. */
   adapters?: FrameworkAdapter[];
+  /** Design check configuration. */
+  designCheck?: DesignCheckConfig;
+  /** AI provider that executes dispatched requests. Required. */
+  provider: ProviderAdapter;
 }
 
 export interface Sidecar {
@@ -38,8 +50,46 @@ export interface Sidecar {
 export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   const port = opts.port ?? DEFAULT_PORT;
   const adapters = opts.adapters ?? [];
+  const provider = opts.provider;
+  await provider.prepare?.({ projectRoot: opts.projectRoot, port });
+
+  /** Dispatch a request and, after the provider process exits, auto-resolve
+   *  the request if the model never called resolve_request itself. Prevents
+   *  the overlay's "in flight" state from hanging when a model returns
+   *  without invoking the resolve MCP tool. */
+  function dispatchAndTrack(
+    req: PendingRequest,
+    continuation?: ContinuationContext,
+  ) {
+    const handle = dispatchRequest(req, {
+      provider,
+      cwd: opts.projectRoot,
+      port,
+      onLog: (line) => console.log(line),
+      continuation,
+    });
+    void handle.done.then(({ code }) => {
+      const stillPending = state.pending.some((p) => p.id === req.id);
+      if (!stillPending) return;
+      const summary =
+        code === 0
+          ? "Provider exited without calling resolve_request — see logs."
+          : `Provider exited with code ${code}.`;
+      state.resolve(req.id, summary);
+      broadcast({ type: "request_resolved", id: req.id, summary });
+      broadcast({
+        type: "toast",
+        level: code === 0 ? "info" : "error",
+        message: summary,
+      });
+    });
+    return handle;
+  }
+  const designCheck = opts.designCheck ?? { enabled: true, autoFixMaxLoops: 2, strict: false };
   const state = new ShellState();
   const sockets = new Set<WebSocket>();
+
+  const autoFixEnabled = designCheck.enabled && designCheck.autoFixMaxLoops > 0;
 
   const broadcast = (msg: ServerToClient) => {
     const json = JSON.stringify(msg);
@@ -90,8 +140,61 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
       case "resolve_request": {
         const p = rpc.params as ResolveParams;
         const req = state.resolve(p.id, p.summary);
-        if (req) broadcast({ type: "request_resolved", id: p.id, summary: p.summary });
-        return { resolved: !!req };
+        if (!req) return { resolved: false };
+
+        // Auto-fix loop: if design findings exist and we haven't exceeded max loops,
+        // auto-enqueue a continuation instead of broadcasting resolved.
+        if (autoFixEnabled) {
+          const thread = state.getThreadForRequest(p.id);
+          if (thread) {
+            const iteration = state.getAutoFixIteration(p.id);
+            const findings = thread.designFindings;
+            if (findings.length > 0 && iteration < designCheck.autoFixMaxLoops) {
+              const fixable = findings.filter((f) => f.severity === "error" || f.severity === "warning");
+              if (fixable.length > 0) {
+                state.incrementAutoFixIteration(p.id);
+                state.clearDesignFindings(p.id);
+                const parentResolved = state.findResolved(p.id);
+                if (parentResolved) {
+                  const fixId = `auto-fix-${p.id}-${iteration}`;
+                  const issues = fixable
+                    .map((f) => `- ${f.rule}: ${f.message}${f.file ? ` (${f.file})` : ""}`)
+                    .join("\n");
+                  const fixPrompt = `The previous edit introduced these design issues:\n${issues}\n\nFix them while preserving the intended change. Make minimal edits.`;
+                  const fixReq: PendingRequest = {
+                    id: fixId,
+                    kind: "prompt",
+                    createdAt: Date.now(),
+                    selection: parentResolved.selection,
+                    prompt: fixPrompt,
+                    path: parentResolved.path,
+                  };
+                  state.linkContinuation(p.id, fixId);
+                  state.enqueue(fixReq);
+                  const continuation: ContinuationContext = {
+                    threadId: thread.threadId,
+                    parentId: p.id,
+                    previousPrompt: parentResolved.prompt,
+                    previousSummary: parentResolved.summary,
+                    previousEdits: thread.edits,
+                  };
+                  dispatchAndTrack(fixReq, continuation);
+                  broadcast({
+                    type: "toast",
+                    level: "info",
+                    message: `Auto-fixing ${fixable.length} design issue(s) (loop ${iteration + 1}/${designCheck.autoFixMaxLoops})…`,
+                  });
+                  return { resolved: true, autoFixTriggered: true };
+                }
+              }
+            }
+            // Max loops reached or no fixable issues: clear findings and resolve
+            state.clearDesignFindings(p.id);
+          }
+        }
+
+        broadcast({ type: "request_resolved", id: p.id, summary: p.summary });
+        return { resolved: true };
       }
       case "apply_text_edit": {
         const p = rpc.params as ApplyEditParams;
@@ -114,10 +217,42 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           files: result.touchedFiles,
           scope: result.exportedSurfaceChanged ? "project" : "file",
         });
+        // Run design check on touched files
+        if (designCheck.enabled && attributedId) {
+          const allFindings: Array<{ rule: string; severity: string; message: string; file: string }> = [];
+          for (const file of result.touchedFiles) {
+            try {
+              const content = await readFile(file, "utf8");
+              const findings = checkDesign(file, content);
+              for (const f of findings) {
+                allFindings.push({ ...f, file });
+              }
+            } catch {
+              // ignore unreadable files
+            }
+          }
+          if (allFindings.length > 0) {
+            state.recordDesignFindings(
+              attributedId,
+              allFindings.map((f) => ({
+                rule: f.rule,
+                severity: f.severity as "error" | "warning" | "info",
+                message: f.message,
+                file: f.file,
+              })),
+            );
+          }
+        }
         return { applied: p.edits.length };
       }
       case "get_recent_edits": {
         return { edits: state.recentEdits } satisfies RecentEditsResult;
+      }
+      case "check_design": {
+        const p = rpc.params as { file: string };
+        const content = await readFile(p.file, "utf8");
+        const findings = checkDesign(p.file, content);
+        return { findings };
       }
     }
   }
@@ -156,11 +291,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           path: msg.path,
         };
         state.enqueue(req);
-        dispatchRequest(req, {
-          cwd: opts.projectRoot,
-          port,
-          onLog: (line) => console.log(line),
-        });
+        dispatchAndTrack(req);
         return;
       }
       case "request_extract": {
@@ -172,11 +303,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           suggestedName: msg.suggestedName,
         };
         state.enqueue(req);
-        dispatchRequest(req, {
-          cwd: opts.projectRoot,
-          port,
-          onLog: (line) => console.log(line),
-        });
+        dispatchAndTrack(req);
         return;
       }
       case "request_continue": {
@@ -223,12 +350,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           previousSummary: parentResolved.summary,
           previousEdits: thread.edits,
         };
-        dispatchRequest(req, {
-          cwd: opts.projectRoot,
-          port,
-          onLog: (line) => console.log(line),
-          continuation,
-        });
+        dispatchAndTrack(req, continuation);
         return;
       }
       case "request_revert": {
@@ -283,6 +405,27 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           broadcast({ type: "request_reverted", threadId: thread.threadId, files });
           diagnostics.schedule({ files, scope: "file" });
         })();
+        return;
+      }
+      case "scan_page": {
+        console.log(`[scan] received ${msg.findings.length} findings from page scan (${msg.id})`);
+        if (msg.findings.length > 0) {
+          const summary = msg.findings
+            .map((f) => `[${f.severity}] ${f.rule}: ${f.message}`)
+            .join("\n");
+          broadcast({
+            type: "toast",
+            level: "info",
+            message: `Page scan found ${msg.findings.length} design issue(s). See console for details.`,
+          });
+          console.log(`[scan findings]\n${summary}`);
+        } else {
+          broadcast({
+            type: "toast",
+            level: "success",
+            message: "Page scan complete. No design issues found.",
+          });
+        }
         return;
       }
     }

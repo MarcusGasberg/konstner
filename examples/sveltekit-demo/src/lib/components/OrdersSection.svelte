@@ -59,10 +59,10 @@
 <div class="flex flex-col gap-4">
   <div class="flex items-center justify-between">
     <div>
-      <h2 class="text-base font-semibold text-foreground">Orders</h2>
-      <p class="text-xs text-muted-foreground mt-0.5">{allOrders.length} total orders</p>
+      <h2 class="text-xl font-bold text-foreground tracking-tight">Orders</h2>
+      <p class="text-sm text-muted-foreground mt-0.5">{allOrders.length} total orders</p>
     </div>
-    <Button variant="outline" size="sm" class="gap-1.5 text-xs">
+    <Button variant="outline" size="sm" class="gap-1.5 text-sm">
       <Download class="w-3.5 h-3.5" />
       Export
     </Button>
@@ -90,10 +90,10 @@
               page = 0;
             }}
             class={cn(
-              "px-2.5 py-1 rounded-md text-xs font-medium transition-colors",
+              "px-3.5 py-1.5 rounded-full text-sm font-semibold transition-all",
               statusFilter === s
-                ? "bg-primary text-primary-foreground"
-                : "bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                ? "bg-foreground text-background shadow-sm"
+                : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
             {s}
@@ -105,16 +105,16 @@
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead>
-          <tr class="border-b border-border">
-            <th class="text-left pb-2.5 text-xs font-medium text-muted-foreground">Order</th>
-            <th class="text-left pb-2.5 text-xs font-medium text-muted-foreground"
+          <tr class="border-b border-border bg-muted/30">
+            <th class="text-left pb-2.5 text-sm font-medium text-muted-foreground">Order</th>
+            <th class="text-left pb-2.5 text-sm font-medium text-muted-foreground"
               >Customer</th
             >
             <th
-              class="text-left pb-2.5 text-xs font-medium text-muted-foreground hidden md:table-cell"
+              class="text-left pb-2.5 text-sm font-medium text-muted-foreground hidden md:table-cell"
               >Product</th
             >
-            <th class="text-right pb-2.5 text-xs font-medium text-muted-foreground">
+            <th class="text-right pb-2.5 text-sm font-medium text-muted-foreground">
               <button
                 type="button"
                 class="flex items-center gap-1 ml-auto hover:text-foreground"
@@ -124,15 +124,15 @@
               </button>
             </th>
             <th
-              class="text-left pb-2.5 text-xs font-medium text-muted-foreground pl-4 hidden sm:table-cell"
+              class="text-left pb-2.5 text-sm font-medium text-muted-foreground pl-4 hidden sm:table-cell"
               >Status</th
             >
             <th
-              class="text-left pb-2.5 text-xs font-medium text-muted-foreground hidden lg:table-cell"
+              class="text-left pb-2.5 text-sm font-medium text-muted-foreground hidden lg:table-cell"
               >Method</th
             >
             <th
-              class="text-left pb-2.5 text-xs font-medium text-muted-foreground hidden lg:table-cell"
+              class="text-left pb-2.5 text-sm font-medium text-muted-foreground hidden lg:table-cell"
               >Date</th
             >
             <th class="pb-2.5"></th>
@@ -141,28 +141,29 @@
         <tbody class="divide-y divide-border">
           {#each paginated as order (order.id)}
             <tr class="hover:bg-muted/40 transition-colors">
-              <td class="py-2.5 text-xs font-mono text-muted-foreground">{order.id}</td>
-              <td class="py-2.5 font-medium text-foreground text-xs">{order.customer}</td>
-              <td class="py-2.5 text-xs text-muted-foreground hidden md:table-cell"
+              <td class="py-2.5 text-sm font-mono text-muted-foreground">{order.id}</td>
+              <td class="py-2.5 font-medium text-foreground text-sm">{order.customer}</td>
+              <td class="py-2.5 text-sm text-muted-foreground hidden md:table-cell"
                 >{order.product}</td
               >
-              <td class="py-2.5 text-right font-medium text-foreground text-xs"
+              <td class="py-2.5 text-right font-medium text-foreground text-sm"
                 >{order.amount}</td
               >
               <td class="py-2.5 pl-4 hidden sm:table-cell">
                 <span
                   class={cn(
-                    "text-xs font-medium px-2 py-0.5 rounded-full",
+                    "inline-flex items-center gap-1.5 text-sm font-medium px-2.5 py-1 rounded-full",
                     statusStyles[order.status]
                   )}
                 >
+                  <span class="w-1.5 h-1.5 rounded-full bg-current opacity-60"></span>
                   {order.status}
                 </span>
               </td>
-              <td class="py-2.5 text-xs text-muted-foreground hidden lg:table-cell"
+              <td class="py-2.5 text-sm text-muted-foreground hidden lg:table-cell"
                 >{order.method}</td
               >
-              <td class="py-2.5 text-xs text-muted-foreground hidden lg:table-cell"
+              <td class="py-2.5 text-sm text-muted-foreground hidden lg:table-cell"
                 >{order.date}</td
               >
               <td class="py-2.5">
@@ -180,7 +181,7 @@
     </div>
 
     <div class="flex items-center justify-between pt-1 border-t border-border">
-      <span class="text-xs text-muted-foreground">
+      <span class="text-sm text-muted-foreground">
         {filtered.length === 0
           ? "0"
           : `${page * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE + PAGE_SIZE, filtered.length)}`}

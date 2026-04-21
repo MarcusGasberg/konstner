@@ -1,10 +1,16 @@
 import { sveltekit } from "@sveltejs/kit/vite";
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
-import konstner from "@konstner/vite-plugin";
+import konstner, { createOpenCodeProvider } from "@konstner/vite-plugin";
 
 export default defineConfig({
-  plugins: [konstner(), tailwindcss(), sveltekit()],
+  plugins: [
+    konstner({
+      provider: createOpenCodeProvider(),
+    }),
+    tailwindcss(),
+    sveltekit(),
+  ],
   ssr: {
     noExternal: [/^@konstner\//],
   },

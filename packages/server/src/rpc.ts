@@ -6,9 +6,24 @@ export interface RpcRequest {
     | "list_pending_requests"
     | "resolve_request"
     | "apply_text_edit"
-    | "get_recent_edits";
+    | "get_recent_edits"
+    | "check_design";
   params?: unknown;
   requestId?: string;
+}
+
+export interface CheckDesignParams {
+  file: string;
+}
+
+export interface CheckDesignResult {
+  findings: Array<{
+    rule: string;
+    severity: "error" | "warning" | "info";
+    message: string;
+    line?: number;
+    col?: number;
+  }>;
 }
 
 export interface GetSelectionResult {

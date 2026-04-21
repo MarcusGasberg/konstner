@@ -20,6 +20,16 @@
       "types": "./dist/adapters/svelte-rewrite.d.ts",
       "development": "./src/adapters/svelte-rewrite.ts",
       "import": "./dist/adapters/svelte-rewrite.js"
+    },
+    "./providers/claude": {
+      "types": "./dist/providers/claude.d.ts",
+      "development": "./src/providers/claude.ts",
+      "import": "./dist/providers/claude.js"
+    },
+    "./providers/opencode": {
+      "types": "./dist/providers/opencode.d.ts",
+      "development": "./src/providers/opencode.ts",
+      "import": "./dist/providers/opencode.js"
     }
   },
   "bin": {

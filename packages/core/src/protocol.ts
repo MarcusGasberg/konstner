@@ -7,6 +7,13 @@ export const SourceLoc = z.object({
 });
 export type SourceLoc = z.infer<typeof SourceLoc>;
 
+export const DesignFlag = z.object({
+  rule: z.string(),
+  severity: z.enum(["error", "warning", "info"]),
+  message: z.string(),
+});
+export type DesignFlag = z.infer<typeof DesignFlag>;
+
 export const ElementSelection = z.object({
   kLocId: z.string(),
   loc: SourceLoc.nullable(),
@@ -14,6 +21,7 @@ export const ElementSelection = z.object({
   outerHTML: z.string(),
   computedStyles: z.record(z.string(), z.string()),
   ancestors: z.array(z.object({ tagName: z.string(), loc: SourceLoc.nullable() })),
+  designFlags: z.array(DesignFlag).optional(),
 });
 export type ElementSelection = z.infer<typeof ElementSelection>;
 
@@ -48,6 +56,7 @@ export const ClientToServer = z.discriminatedUnion("type", [
   z.object({ type: z.literal("request_extract"), id: z.string(), selection: z.array(ElementSelection), suggestedName: z.string() }),
   z.object({ type: z.literal("request_continue"), id: z.string(), parentId: z.string(), prompt: z.string() }),
   z.object({ type: z.literal("request_revert"), threadId: z.string() }),
+  z.object({ type: z.literal("scan_page"), id: z.string(), findings: z.array(DesignFlag) }),
 ]);
 export type ClientToServer = z.infer<typeof ClientToServer>;
 
