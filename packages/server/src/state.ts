@@ -5,6 +5,7 @@ import type {
   TextEdit,
   DesignFlag,
 } from "@konstner/core";
+import type { DesignSystem } from "./designmd/index.js";
 
 export interface DesignFindingLite {
   rule: string;
@@ -41,7 +42,12 @@ export class ShellState {
   recentEdits: TextEdit[] = [];
   threads = new Map<string, ThreadRecord>();
   requestToThread = new Map<string, string>();
+  designSystem: DesignSystem | null = null;
   private pendingRuntimeFlags: DesignFlag[] = [];
+
+  setDesignSystem(ds: DesignSystem | null) {
+    this.designSystem = ds;
+  }
 
   setSelection(sel: ElementSelection | null) {
     this.currentSelection = sel;

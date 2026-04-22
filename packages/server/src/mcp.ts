@@ -93,6 +93,12 @@ const tools = [
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "get_design_system",
+    description:
+      "Return the project's DESIGN.md parsed tokens (colors, typography, spacing, rounded, components) plus the human-readable prose. Use this BEFORE editing styles so your edits reference existing tokens (e.g. var(--color-primary)) instead of inventing new values. Returns {designSystem: null} if the project has no DESIGN.md.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
     name: "check_design",
     description:
       "Run design anti-pattern detection on a source file. Returns a list of issues such as low contrast, AI gradient palettes, nested cards, overused fonts, etc. Use this after apply_text_edit to verify your changes before resolving.",

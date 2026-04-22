@@ -3,6 +3,11 @@ import { readFile, writeFile } from "node:fs/promises";
 import { WebSocketServer, WebSocket } from "ws";
 import { checkDesign } from "./design-check/index.js";
 import {
+  loadDesignSystem,
+  watchDesignSystem,
+  prose as designProse,
+} from "./designmd/index.js";
+import {
   DEFAULT_PORT,
   WS_PATH,
   type ClientToServer,
@@ -23,6 +28,7 @@ import type {
   ResolveParams,
   RpcRequest,
   GetSelectionResult,
+  GetDesignSystemResult,
 } from "./rpc.js";
 
 export interface DesignCheckConfig {
@@ -88,6 +94,16 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   const designCheck = opts.designCheck ?? { enabled: true, autoFixMaxLoops: 2, strict: false };
   const state = new ShellState();
   const sockets = new Set<WebSocket>();
+
+  state.setDesignSystem(await loadDesignSystem(opts.projectRoot));
+  const stopWatchDesign = watchDesignSystem(opts.projectRoot, (ds) => {
+    state.setDesignSystem(ds);
+    broadcast({
+      type: "toast",
+      level: "info",
+      message: `DESIGN.md reloaded${ds ? "" : " (file removed)"}`,
+    });
+  });
 
   const autoFixEnabled = designCheck.enabled && designCheck.autoFixMaxLoops > 0;
 
@@ -223,7 +239,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
           for (const file of result.touchedFiles) {
             try {
               const content = await readFile(file, "utf8");
-              const findings = checkDesign(file, content);
+              const findings = checkDesign(file, content, state.designSystem);
               for (const f of findings) {
                 allFindings.push({ ...f, file });
               }
@@ -251,8 +267,26 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
       case "check_design": {
         const p = rpc.params as { file: string };
         const content = await readFile(p.file, "utf8");
-        const findings = checkDesign(p.file, content);
+        const findings = checkDesign(p.file, content, state.designSystem);
         return { findings };
+      }
+      case "get_design_system": {
+        const ds = state.designSystem;
+        if (!ds) return { designSystem: null } satisfies GetDesignSystemResult;
+        return {
+          designSystem: {
+            name: ds.name,
+            description: ds.description,
+            colors: ds.colors,
+            typography: ds.typography as Record<string, Record<string, string | number>>,
+            rounded: ds.rounded,
+            spacing: ds.spacing,
+            components: ds.components,
+            prose: designProse(ds),
+            findings: ds.findings,
+            sourcePath: ds.sourcePath,
+          },
+        } satisfies GetDesignSystemResult;
       }
     }
   }
@@ -449,6 +483,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   return {
     port,
     async close() {
+      stopWatchDesign();
       await new Promise<void>((r) => wss.close(() => r()));
       await new Promise<void>((r) => http.close(() => r()));
     },

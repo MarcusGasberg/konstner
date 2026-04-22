@@ -7,9 +7,30 @@ export interface RpcRequest {
     | "resolve_request"
     | "apply_text_edit"
     | "get_recent_edits"
-    | "check_design";
+    | "check_design"
+    | "get_design_system";
   params?: unknown;
   requestId?: string;
+}
+
+export interface GetDesignSystemResult {
+  designSystem: {
+    name: string;
+    description?: string;
+    colors: Record<string, string>;
+    typography: Record<string, Record<string, string | number>>;
+    rounded: Record<string, string>;
+    spacing: Record<string, string>;
+    components: Record<string, Record<string, string>>;
+    prose: string;
+    findings: Array<{
+      rule: string;
+      severity: "error" | "warning" | "info";
+      message: string;
+      path?: string;
+    }>;
+    sourcePath: string;
+  } | null;
 }
 
 export interface CheckDesignParams {

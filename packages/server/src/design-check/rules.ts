@@ -1,4 +1,5 @@
 import { parseColor, checkContrast } from "./color.js";
+import type { DesignSystem } from "../designmd/index.js";
 import {
   extractTailwindClasses,
   checkTailwindContrast,
@@ -29,6 +30,7 @@ export interface RuleContext {
   isCss: boolean;
   isHtmlLike: boolean;
   isJsxLike: boolean;
+  designSystem?: DesignSystem | null;
 }
 
 export type DesignRule = (ctx: RuleContext, out: DesignFinding[]) => void;
@@ -683,7 +685,11 @@ registerBuiltinRules();
 
 // ── Main entry ───────────────────────────────────────────────────────
 
-export function checkDesign(filePath: string, content: string): DesignFinding[] {
+export function checkDesign(
+  filePath: string,
+  content: string,
+  designSystem: DesignSystem | null = null,
+): DesignFinding[] {
   const out: DesignFinding[] = [];
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   const ctx: RuleContext = {
@@ -693,6 +699,7 @@ export function checkDesign(filePath: string, content: string): DesignFinding[] 
     isCss: ext === "css" || ext === "scss" || ext === "less" || ext === "sass",
     isHtmlLike: ext === "svelte" || ext === "vue" || ext === "html" || ext === "astro",
     isJsxLike: ext === "jsx" || ext === "tsx" || ext === "js" || ext === "ts",
+    designSystem,
   };
 
   for (const rule of RULES) {
