@@ -18,3 +18,4 @@ export {
 } from "./tailwind.js";
 export { parseColor, checkContrast, relativeLuminance, contrastRatio } from "./color.js";
 export type { SRGB } from "./color.js";
+export { checkDesignMdTokens } from "./designmd-rule.js";

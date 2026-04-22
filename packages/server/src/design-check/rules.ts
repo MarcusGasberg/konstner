@@ -1,5 +1,6 @@
 import { parseColor, checkContrast } from "./color.js";
 import type { DesignSystem } from "../designmd/index.js";
+import { checkDesignMdTokens } from "./designmd-rule.js";
 import {
   extractTailwindClasses,
   checkTailwindContrast,
@@ -678,6 +679,7 @@ function registerBuiltinRules() {
   RULES.push(ruleJustifiedText);
   RULES.push(ruleCrampedPadding);
   RULES.push(ruleTailwindClasses);
+  RULES.push(checkDesignMdTokens);
 }
 
 // Ensure builtins are registered once on module load
