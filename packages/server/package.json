@@ -30,6 +30,16 @@
       "types": "./dist/providers/opencode.d.ts",
       "development": "./src/providers/opencode.ts",
       "import": "./dist/providers/opencode.js"
+    },
+    "./designmd": {
+      "types": "./dist/designmd/index.d.ts",
+      "development": "./src/designmd/index.ts",
+      "import": "./dist/designmd/index.js"
+    },
+    "./designmd/tokens": {
+      "types": "./dist/designmd/tokens.d.ts",
+      "development": "./src/designmd/tokens.ts",
+      "import": "./dist/designmd/tokens.js"
     }
   },
   "bin": {

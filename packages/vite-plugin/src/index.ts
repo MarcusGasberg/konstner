@@ -3,6 +3,8 @@ import type { FrameworkAdapter, ProviderAdapter } from "@konstner/core";
 import { DEFAULT_PORT } from "@konstner/core";
 import { startSidecar, type Sidecar } from "@konstner/server/sidecar";
 import { createClaudeProvider } from "@konstner/server/providers/claude";
+import { loadDesignSystem } from "@konstner/server/designmd";
+import { toCssVars } from "@konstner/server/designmd/tokens";
 import { createSvelteAdapter } from "./adapters/svelte.js";
 import { writeMcpConfig } from "./mcp-config.js";
 import { relative, resolve, dirname } from "node:path";
@@ -63,6 +65,27 @@ export default function konstner(opts: KonstnerOptions = {}): Plugin {
       server.config.logger.info(
         `\n  \u25B2  konstner on http://127.0.0.1:${port}  (adapters: ${adapters.map((a) => a.id).join(", ")}, provider: ${provider.id})\n`,
       );
+
+      const designMdPath = resolve(config.root, "DESIGN.md");
+      server.watcher.add(designMdPath);
+      server.watcher.on("change", (file) => {
+        if (file === designMdPath) {
+          const mod = server.moduleGraph.getModuleById(
+            "\0virtual:konstner/design-tokens.css",
+          );
+          if (mod) void server.reloadModule(mod);
+        }
+      });
+    },
+    resolveId(id) {
+      if (id === "virtual:konstner/design-tokens.css")
+        return "\0virtual:konstner/design-tokens.css";
+      return null;
+    },
+    async load(id) {
+      if (id !== "\0virtual:konstner/design-tokens.css") return null;
+      const ds = await loadDesignSystem(config.root);
+      return ds ? toCssVars(ds) : "/* konstner: no DESIGN.md found */";
     },
     transform(code, id) {
       const adapter = adapters.find((a) => a.matches(id));

@@ -1,5 +1,6 @@
 <script lang="ts">
   import "../app.css";
+  import "virtual:konstner/design-tokens.css";
   import KonstnerShell from "@konstner/client/KonstnerShell.svelte";
 
   let { children } = $props();
