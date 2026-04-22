@@ -45,6 +45,7 @@
     "build": "tsc"
   },
   "dependencies": {
+    "@google/design.md": "^0.1.1",
     "@konstner/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "magic-string": "^0.30.11",
