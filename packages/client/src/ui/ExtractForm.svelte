@@ -14,6 +14,7 @@
     return base.charAt(0).toUpperCase() + base.slice(1);
   }
 
+  // svelte-ignore state_referenced_locally
   let name = $state<string>(defaultName(selection.tagName));
   let input: HTMLInputElement | undefined = $state();
 
