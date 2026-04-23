@@ -14,7 +14,7 @@
     return base.charAt(0).toUpperCase() + base.slice(1);
   }
 
-  let name = $state(() => defaultName(selection.tagName));
+  let name = $state<string>(defaultName(selection.tagName));
   let input: HTMLInputElement | undefined = $state();
 
   $effect(() => {
