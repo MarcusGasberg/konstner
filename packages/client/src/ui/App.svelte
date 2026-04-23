@@ -13,6 +13,7 @@
   }
   let { ctx }: Props = $props();
 
+  // svelte-ignore state_referenced_locally
   provideAppContext(ctx);
 </script>
 
