@@ -180,7 +180,7 @@ Create `packages/client/src/stores/toasts.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { createToastsStore } from "./toasts.svelte.ts";
+import { createToastsStore } from "./toasts.svelte.js";
 
 describe("toasts store", () => {
   it("push adds a toast with a unique id", () => {
@@ -284,7 +284,7 @@ Create `packages/client/src/stores/selection.test.ts`:
 ```ts
 import { describe, it, expect, vi } from "vitest";
 import type { ElementSelection } from "@konstner/core";
-import { createSelectionStore } from "./selection.svelte.ts";
+import { createSelectionStore } from "./selection.svelte.js";
 
 function makeSel(kLocId: string, tag = "div"): ElementSelection {
   return {
@@ -430,7 +430,7 @@ Create `packages/client/src/stores/history.test.ts`:
 ```ts
 import { describe, it, expect, vi } from "vitest";
 import type { ElementSelection } from "@konstner/core";
-import { createHistoryStore } from "./history.svelte.ts";
+import { createHistoryStore } from "./history.svelte.js";
 
 function makeSel(kLocId = "k1"): ElementSelection {
   return {
@@ -818,7 +818,7 @@ Create `packages/client/src/stores/panel.test.ts`:
 
 ```ts
 import { describe, it, expect } from "vitest";
-import { createPanelStore } from "./panel.svelte.ts";
+import { createPanelStore } from "./panel.svelte.js";
 
 describe("panel store", () => {
   it("toggle flips open", () => {
@@ -916,7 +916,7 @@ Create `packages/client/src/stores/scan.test.ts`:
 ```ts
 import { describe, it, expect, vi } from "vitest";
 import type { ScanResult } from "../scan.ts";
-import { createScanStore } from "./scan.svelte.ts";
+import { createScanStore } from "./scan.svelte.js";
 
 const EMPTY_RESULT: ScanResult = {
   findings: [],
@@ -2247,12 +2247,12 @@ import { describe, it, expect, vi } from "vitest";
 import { render, cleanup } from "@testing-library/svelte";
 import { afterEach } from "vitest";
 import App from "./App.svelte";
-import { createToastsStore } from "../stores/toasts.svelte.ts";
-import { createSelectionStore } from "../stores/selection.svelte.ts";
-import { createHoverStore } from "../stores/hover.svelte.ts";
-import { createHistoryStore } from "../stores/history.svelte.ts";
-import { createPanelStore } from "../stores/panel.svelte.ts";
-import { createScanStore } from "../stores/scan.svelte.ts";
+import { createToastsStore } from "../stores/toasts.svelte.js";
+import { createSelectionStore } from "../stores/selection.svelte.js";
+import { createHoverStore } from "../stores/hover.svelte.js";
+import { createHistoryStore } from "../stores/history.svelte.js";
+import { createPanelStore } from "../stores/panel.svelte.js";
+import { createScanStore } from "../stores/scan.svelte.js";
 
 afterEach(() => cleanup());
 
