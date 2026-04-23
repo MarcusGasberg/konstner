@@ -3,6 +3,7 @@ import type { ElementSelection, SourceLoc, DesignFlag } from "@konstner/core";
 export interface PickerCallbacks {
   onHover(el: HTMLElement | null): void;
   onSelect(sel: ElementSelection): void;
+  onActiveChange?(active: boolean): void;
 }
 
 const RELEVANT_STYLES = [
@@ -43,14 +44,17 @@ export class Picker {
     document.addEventListener("mousemove", this.onMove, true);
     document.addEventListener("click", this.onClick, true);
     document.addEventListener("keydown", this.onKey, true);
+    this.cb.onActiveChange?.(true);
   }
 
   stop() {
+    if (!this.active) return;
     this.active = false;
     document.removeEventListener("mousemove", this.onMove, true);
     document.removeEventListener("click", this.onClick, true);
     document.removeEventListener("keydown", this.onKey, true);
     this.cb.onHover(null);
+    this.cb.onActiveChange?.(false);
   }
 
   isActive() {

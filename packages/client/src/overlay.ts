@@ -42,6 +42,9 @@ export function mountOverlay(opts: { port: number }): OverlayHandle {
     onSelect(sel) {
       selection.setFromPicker(sel);
     },
+    onActiveChange(active) {
+      hover.setActive(active);
+    },
   });
 
   const offMessage = ws.onMessage((msg: ServerToClient) => {

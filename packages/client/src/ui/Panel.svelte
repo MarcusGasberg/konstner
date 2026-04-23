@@ -4,13 +4,13 @@
   import { findNextAnnotatedAncestor } from "../stores/selection.svelte.js";
   import ExtractForm from "./ExtractForm.svelte";
 
-  const { panel, picker, selection, history, scan } = useAppContext();
+  const { panel, picker, selection, hover, history, scan } = useAppContext();
 
   let textarea: HTMLTextAreaElement | undefined = $state();
   let prompt = $state("");
 
   const sel = $derived(selection.current);
-  const picking = $derived(picker.isActive());
+  const picking = $derived(hover.active);
   const locLine = $derived.by(() => {
     if (!sel) {
       return picking
