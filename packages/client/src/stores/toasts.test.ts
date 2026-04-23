@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createToastsStore } from "./toasts.svelte.ts";
+import { createToastsStore } from "./toasts.svelte.js";
 
 describe("toasts store", () => {
   it("push adds a toast with a unique id", () => {
